@@ -32,6 +32,24 @@ export interface TestSummary {
   marksPerQuestion: number;
   status: 'Published';
   createdAt: string;
+  completedCount: number;
+  draftCount: number;
+}
+export interface TestAttemptSummary {
+  id: number;
+  studentId: number;
+  studentName: string;
+  status: 'Draft' | 'Completed';
+  totalQuestions: number;
+  attemptedQuestions: number;
+  correctCount: number;
+  incorrectCount: number;
+  unansweredCount: number;
+  positiveMarks: number;
+  negativeMarks: number;
+  finalScore: number;
+  rank: number | null;
+  timeTakenSeconds: number;
 }
 export const blankDraft = (): TestDraft => ({
   course: '',

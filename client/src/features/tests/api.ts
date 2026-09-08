@@ -1,4 +1,4 @@
-import type { TestDraft, TestSummary } from './types';
+import type { TestAttemptSummary, TestDraft, TestSummary } from './types';
 
 const tokenKey = 'testseries.adminToken';
 const usernameKey = 'testseries.adminUsername';
@@ -34,6 +34,8 @@ export const testApi = {
     localStorage.removeItem(usernameKey);
   },
   list: (): Promise<TestSummary[]> => request('/api/tests'),
+  attempts: (testId: number): Promise<TestAttemptSummary[]> =>
+    request(`/api/tests/${testId}/attempts`),
   get: (id: number): Promise<TestDraft> => request(`/api/tests/${id}`),
   upload: (
     files: File[],

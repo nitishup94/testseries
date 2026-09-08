@@ -8,12 +8,22 @@ const connectionConfig = {
     password: process.env.DB_PASSWORD ?? '',
 };
 const databaseName = process.env.DB_NAME ?? 'testseries';
+const studyPlannerDatabaseName = process.env.STUDYPLANNER_DB_NAME ?? 'studyplanner';
 if (!/^[A-Za-z0-9_]+$/.test(databaseName)) {
     throw new Error('DB_NAME may only contain letters, numbers, and underscores.');
+}
+if (!/^[A-Za-z0-9_]+$/.test(studyPlannerDatabaseName)) {
+    throw new Error('STUDYPLANNER_DB_NAME may only contain letters, numbers, and underscores.');
 }
 export const db = mysql.createPool({
     ...connectionConfig,
     database: databaseName,
+    waitForConnections: true,
+    connectionLimit: 10,
+});
+export const studyPlannerDb = mysql.createPool({
+    ...connectionConfig,
+    database: studyPlannerDatabaseName,
     waitForConnections: true,
     connectionLimit: 10,
 });
@@ -80,6 +90,21 @@ export async function initializeDatabase() {
         CONSTRAINT uq_test_question_number UNIQUE (test_id, question_number)
       )
     `);
+        await connection.query(`CREATE TABLE IF NOT EXISTS test_attempts (
+      id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, test_id INT UNSIGNED NOT NULL, student_id INT UNSIGNED NOT NULL,
+      status ENUM('Draft','Completed') NOT NULL DEFAULT 'Draft', started_at DATETIME NOT NULL, submitted_at DATETIME NULL,
+      expires_at DATETIME NOT NULL, current_question SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+      score DECIMAL(8,2) NULL, correct_count SMALLINT UNSIGNED NULL, incorrect_count SMALLINT UNSIGNED NULL, unanswered_count SMALLINT UNSIGNED NULL,
+      positive_marks DECIMAL(8,2) NULL, negative_marks DECIMAL(8,2) NULL, accuracy DECIMAL(6,2) NULL, percentage DECIMAL(6,2) NULL, time_taken_seconds INT UNSIGNED NULL,
+      CONSTRAINT fk_attempts_test FOREIGN KEY (test_id) REFERENCES tests(id) ON DELETE CASCADE, CONSTRAINT uq_student_test_attempt UNIQUE (test_id, student_id)
+    )`);
+        await connection.query(`CREATE TABLE IF NOT EXISTS test_attempt_answers (
+      id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, attempt_id INT UNSIGNED NOT NULL, question_id INT UNSIGNED NOT NULL,
+      selected_answer ENUM('A','B','C','D') NULL, visited BOOLEAN NOT NULL DEFAULT FALSE, marked_for_review BOOLEAN NOT NULL DEFAULT FALSE, time_spent_seconds INT UNSIGNED NOT NULL DEFAULT 0,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      CONSTRAINT fk_attempt_answers_attempt FOREIGN KEY (attempt_id) REFERENCES test_attempts(id) ON DELETE CASCADE,
+      CONSTRAINT fk_attempt_answers_question FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE, CONSTRAINT uq_attempt_question UNIQUE (attempt_id, question_id)
+    )`);
     }
     finally {
         await connection.end();

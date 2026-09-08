@@ -38,10 +38,6 @@ export function AdminLoginPage({
           <h1 className="mt-3 text-4xl font-bold leading-tight">
             Build better assessments, with confidence.
           </h1>
-          <p className="mt-5 max-w-sm leading-7 text-indigo-100">
-            Create image-led tests, confirm answers, and manage every published series from one
-            protected workspace.
-          </p>
         </div>
         <div className="p-7 sm:p-10">
           <div className="md:hidden">

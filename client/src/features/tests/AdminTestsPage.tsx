@@ -10,6 +10,7 @@ import {
   Pencil,
   Plus,
   UploadCloud,
+  Users,
   X,
 } from 'lucide-react';
 import { testApi } from './api';
@@ -20,6 +21,7 @@ import {
   type Answer,
   type Question,
   type TestDraft,
+  type TestAttemptSummary,
   type TestSummary,
 } from './types';
 
@@ -32,6 +34,7 @@ const optionLabels = {
 } as const;
 const localDate = (date: string) =>
   date ? new Date(date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+const formatDuration = (seconds: number): string => `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 
 export function AdminTestsPage({
   onHome,
@@ -48,6 +51,9 @@ export function AdminTestsPage({
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [questionErrors, setQuestionErrors] = useState<number[]>([]);
+  const [resultsTest, setResultsTest] = useState<TestSummary | null>(null);
+  const [attempts, setAttempts] = useState<TestAttemptSummary[]>([]);
+  const [attemptsLoading, setAttemptsLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const loadTests = async (): Promise<void> => {
     setLoading(true);
@@ -98,6 +104,21 @@ export function AdminTestsPage({
       });
     } finally {
       setLoading(false);
+    }
+  };
+  const viewAttempts = async (test: TestSummary): Promise<void> => {
+    setResultsTest(test);
+    setAttemptsLoading(true);
+    try {
+      setAttempts(await testApi.attempts(test.id));
+    } catch (error) {
+      setNotice({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Could not load student results.',
+      });
+      setResultsTest(null);
+    } finally {
+      setAttemptsLoading(false);
     }
   };
   const acceptFiles = (files: File[]): void => {
@@ -249,7 +270,13 @@ export function AdminTestsPage({
           </div>
         )}
         {screen === 'list' ? (
-          <TestList tests={tests} loading={loading} onNew={beginNew} onEdit={editTest} />
+          <TestList
+            tests={tests}
+            loading={loading}
+            onNew={beginNew}
+            onEdit={editTest}
+            onViewAttempts={viewAttempts}
+          />
         ) : (
           <TestForm
             draft={draft}
@@ -270,6 +297,14 @@ export function AdminTestsPage({
             onSubmit={() => void submit()}
           />
         )}
+        {resultsTest && (
+          <StudentResultsModal
+            test={resultsTest}
+            attempts={attempts}
+            loading={attemptsLoading}
+            onClose={() => setResultsTest(null)}
+          />
+        )}
       </div>
     </main>
   );
@@ -280,11 +315,13 @@ function TestList({
   loading,
   onNew,
   onEdit,
+  onViewAttempts,
 }: {
   tests: TestSummary[];
   loading: boolean;
   onNew: () => void;
   onEdit: (id: number) => Promise<void>;
+  onViewAttempts: (test: TestSummary) => Promise<void>;
 }): React.JSX.Element {
   return (
     <section>
@@ -292,9 +329,6 @@ function TestList({
         <div>
           <p className="text-sm font-semibold text-indigo-600">TEST LIBRARY</p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight">Your published tests</h1>
-          <p className="mt-2 text-slate-500">
-            Create, review, and update every assessment from one place.
-          </p>
         </div>
         <button onClick={onNew} className="button button-primary">
           <Plus size={18} />
@@ -309,6 +343,7 @@ function TestList({
               <th className="px-5 py-4 font-semibold">Course</th>
               <th className="px-5 py-4 font-semibold">Availability</th>
               <th className="px-5 py-4 font-semibold">Status</th>
+              <th className="px-5 py-4 font-semibold">Students</th>
               <th className="px-5 py-4">
                 <span className="sr-only">Actions</span>
               </th>
@@ -317,7 +352,7 @@ function TestList({
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={5} className="px-5 py-12 text-center text-slate-500">
+                <td colSpan={6} className="px-5 py-12 text-center text-slate-500">
                   <LoaderCircle className="mx-auto mb-2 animate-spin" />
                   Loading tests…
                 </td>
@@ -340,7 +375,24 @@ function TestList({
                       Published
                     </span>
                   </td>
+                  <td className="px-5 py-4">
+                    <div className="flex gap-2 text-xs font-semibold">
+                      <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-700">
+                        {test.completedCount} completed
+                      </span>
+                      <span className="rounded-full bg-amber-50 px-2.5 py-1 text-amber-700">
+                        {test.draftCount} draft
+                      </span>
+                    </div>
+                  </td>
                   <td className="px-5 py-4 text-right">
+                    <button
+                      onClick={() => void onViewAttempts(test)}
+                      className="button button-secondary mr-2 min-h-9 px-3"
+                    >
+                      <Users size={15} />
+                      Students
+                    </button>
                     <button
                       onClick={() => void onEdit(test.id)}
                       className="button button-secondary min-h-9 px-3"
@@ -353,7 +405,7 @@ function TestList({
               ))
             ) : (
               <tr>
-                <td colSpan={5} className="px-5 py-16 text-center">
+                <td colSpan={6} className="px-5 py-16 text-center">
                   <FileImage className="mx-auto mb-3 text-slate-300" size={32} />
                   <p className="font-semibold">No tests created yet</p>
                   <p className="mt-1 text-sm text-slate-500">
@@ -366,6 +418,113 @@ function TestList({
         </table>
       </div>
     </section>
+  );
+}
+
+function StudentResultsModal({
+  test,
+  attempts,
+  loading,
+  onClose,
+}: {
+  test: TestSummary;
+  attempts: TestAttemptSummary[];
+  loading: boolean;
+  onClose: () => void;
+}): React.JSX.Element {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="student-results-title"
+      className="fixed inset-0 z-30 grid place-items-center bg-slate-950/45 p-4"
+    >
+      <section className="card max-h-[90vh] w-full max-w-7xl overflow-hidden shadow-2xl">
+        <header className="flex items-start justify-between gap-4 border-b border-slate-100 p-5 sm:p-6">
+          <div>
+            <p className="text-sm font-semibold text-indigo-600">STUDENT RESULTS</p>
+            <h2 id="student-results-title" className="mt-1 text-2xl font-bold">
+              {test.name}
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              {test.completedCount} completed · {test.draftCount} in progress
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="button button-secondary size-10 min-h-10 p-0"
+            aria-label="Close student results"
+          >
+            <X size={18} />
+          </button>
+        </header>
+        <div className="max-h-[calc(90vh-130px)] overflow-auto">
+          <table className="w-full min-w-280 text-left text-sm">
+            <thead className="sticky top-0 border-b border-slate-100 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-4 font-semibold">Rank</th>
+                <th className="px-4 py-4 font-semibold">Student</th>
+                <th className="px-4 py-4 font-semibold">Status</th>
+                <th className="px-4 py-4 font-semibold">Attempted</th>
+                <th className="px-4 py-4 font-semibold">Correct</th>
+                <th className="px-4 py-4 font-semibold">Wrong</th>
+                <th className="px-4 py-4 font-semibold">Left</th>
+                <th className="px-4 py-4 font-semibold">+ Marks</th>
+                <th className="px-4 py-4 font-semibold">− Marks</th>
+                <th className="px-4 py-4 font-semibold">Final marks</th>
+                <th className="px-4 py-4 font-semibold">Time taken</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={11} className="px-5 py-12 text-center text-slate-500">
+                    <LoaderCircle className="mx-auto mb-2 animate-spin" />
+                    Loading student results…
+                  </td>
+                </tr>
+              ) : attempts.length ? (
+                attempts.map((attempt) => (
+                  <tr key={attempt.id} className="border-b border-slate-100 last:border-0">
+                    <td className="px-4 py-4 font-bold text-indigo-700">
+                      {attempt.rank ? `#${attempt.rank}` : '—'}
+                    </td>
+                    <td className="px-4 py-4 font-semibold">{attempt.studentName}</td>
+                    <td className="px-4 py-4">
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-xs font-semibold ${attempt.status === 'Completed' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}
+                      >
+                        {attempt.status === 'Completed' ? 'Completed' : 'Draft'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-4">
+                      {attempt.attemptedQuestions}/{attempt.totalQuestions}
+                    </td>
+                    <td className="px-4 py-4 text-emerald-700">{attempt.correctCount}</td>
+                    <td className="px-4 py-4 text-rose-700">{attempt.incorrectCount}</td>
+                    <td className="px-4 py-4">{attempt.unansweredCount}</td>
+                    <td className="px-4 py-4 text-emerald-700">
+                      {attempt.positiveMarks.toFixed(2)}
+                    </td>
+                    <td className="px-4 py-4 text-rose-700">{attempt.negativeMarks.toFixed(2)}</td>
+                    <td className="px-4 py-4 font-bold">{attempt.finalScore.toFixed(2)}</td>
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      {formatDuration(attempt.timeTakenSeconds)}
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={11} className="px-5 py-14 text-center text-slate-500">
+                    No students have started this test yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
   );
 }
 
