@@ -6,6 +6,11 @@ export interface StudentSession {
   token: string;
   student: { id: number; name: string; email: string };
 }
+
+function readUrlToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return new URLSearchParams(window.location.search).get('token');
+}
 export interface TestCard {
   id: number;
   attemptId?: number;
@@ -91,8 +96,11 @@ export const studentApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     }),
+  readUrlToken,
   session: (): string | null => localStorage.getItem(tokenKey),
-  setSession: (session: StudentSession): void => localStorage.setItem(tokenKey, session.token),
+  setToken: (token: string): void => localStorage.setItem(tokenKey, token),
+  setSession: (session: StudentSession | { token: string }): void =>
+    localStorage.setItem(tokenKey, session.token),
   clearSession: (): void => localStorage.removeItem(tokenKey),
   dashboard: (): Promise<Dashboard> => request('/api/student/dashboard'),
   start: (testId: number): Promise<{ attemptId: number }> =>

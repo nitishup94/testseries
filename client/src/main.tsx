@@ -2,12 +2,24 @@ import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AdminHomePage } from './features/admin/AdminHomePage';
 import { AdminLoginPage } from './features/admin/AdminLoginPage';
+import { studentApi } from './features/student/api';
 import { StudentHomePage } from './features/student/StudentHomePage';
 import { AdminTestsPage } from './features/tests/AdminTestsPage';
 import { testApi } from './features/tests/api';
 import './styles.css';
 
 function App(): React.JSX.Element | null {
+  const urlToken = studentApi.readUrlToken();
+  if (urlToken && !studentApi.session()) {
+    studentApi.setToken(urlToken);
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.delete('token');
+    window.history.replaceState(
+      {},
+      '',
+      `${nextUrl.pathname}${nextUrl.search ? `?${nextUrl.searchParams.toString()}` : ''}${nextUrl.hash}`,
+    );
+  }
   const [path, setPath] = useState(window.location.pathname);
   const [username, setUsername] = useState(testApi.getUsername() ?? 'Administrator');
   const authenticated = Boolean(testApi.getToken());
