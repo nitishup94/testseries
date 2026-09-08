@@ -9,6 +9,7 @@ import {
   LogOut,
   Pencil,
   Plus,
+  Trash2,
   UploadCloud,
   Users,
   X,
@@ -119,6 +120,25 @@ export function AdminTestsPage({
       setResultsTest(null);
     } finally {
       setAttemptsLoading(false);
+    }
+  };
+  const deleteTest = async (test: TestSummary): Promise<void> => {
+    const confirmed = window.confirm(
+      `Delete “${test.name}”? This will remove the test, all questions, uploaded images, and every student result linked to it.`,
+    );
+    if (!confirmed) return;
+
+    setNotice(null);
+    try {
+      await testApi.remove(test.id);
+      setTests((current) => current.filter((item) => item.id !== test.id));
+      if (resultsTest?.id === test.id) setResultsTest(null);
+      setNotice({ type: 'success', text: `“${test.name}” was deleted successfully.` });
+    } catch (error) {
+      setNotice({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Could not delete this test.',
+      });
     }
   };
   const acceptFiles = (files: File[]): void => {
@@ -275,6 +295,7 @@ export function AdminTestsPage({
             loading={loading}
             onNew={beginNew}
             onEdit={editTest}
+            onDelete={deleteTest}
             onViewAttempts={viewAttempts}
           />
         ) : (
@@ -315,12 +336,14 @@ function TestList({
   loading,
   onNew,
   onEdit,
+  onDelete,
   onViewAttempts,
 }: {
   tests: TestSummary[];
   loading: boolean;
   onNew: () => void;
   onEdit: (id: number) => Promise<void>;
+  onDelete: (test: TestSummary) => Promise<void>;
   onViewAttempts: (test: TestSummary) => Promise<void>;
 }): React.JSX.Element {
   return (
@@ -399,6 +422,13 @@ function TestList({
                     >
                       <Pencil size={15} />
                       Edit
+                    </button>
+                    <button
+                      onClick={() => void onDelete(test)}
+                      className="button ml-2 min-h-9 border border-rose-200 bg-rose-50 px-3 text-rose-700 hover:bg-rose-100"
+                    >
+                      <Trash2 size={15} />
+                      Delete
                     </button>
                   </td>
                 </tr>

@@ -19,29 +19,60 @@ const withBase = (pathname: string): string => {
 };
 
 function App(): React.JSX.Element | null {
-  const urlToken = studentApi.readUrlToken();
-  if (urlToken && !studentApi.session()) {
-    studentApi.setToken(urlToken);
-    const nextUrl = new URL(window.location.href);
-    nextUrl.searchParams.delete('token');
-    window.history.replaceState(
-      {},
-      '',
-      `${nextUrl.pathname}${nextUrl.search ? `?${nextUrl.searchParams.toString()}` : ''}${nextUrl.hash}`,
-    );
-  }
-  if (window.location.search.includes('token=') && !urlToken) {
-    const nextUrl = new URL(window.location.href);
-    nextUrl.searchParams.delete('token');
-    window.history.replaceState(
-      {},
-      '',
-      `${nextUrl.pathname}${nextUrl.search ? `?${nextUrl.searchParams.toString()}` : ''}${nextUrl.hash}`,
-    );
-  }
   const [path, setPath] = useState(() => normalizePath(window.location.pathname));
   const [username, setUsername] = useState(testApi.getUsername() ?? 'Administrator');
+  const [studentSessionVersion, setStudentSessionVersion] = useState(0);
+  const [ssoPending, setSsoPending] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return Boolean((params.get('token') || params.get('auth_token')) && !studentApi.session());
+  });
   const authenticated = Boolean(testApi.getToken());
+
+  useEffect(() => {
+    const clearSsoParams = (): void => {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.delete('token');
+      nextUrl.searchParams.delete('auth_token');
+      const next = `${nextUrl.pathname}${nextUrl.search ? `?${nextUrl.searchParams.toString()}` : ''}${nextUrl.hash}`;
+      window.history.replaceState({}, '', next);
+    };
+
+    const urlToken = studentApi.readUrlToken();
+    if (!urlToken || studentApi.session()) {
+      if (
+        (window.location.search.includes('token=') ||
+          window.location.search.includes('auth_token=')) &&
+        !urlToken
+      ) {
+        clearSsoParams();
+      }
+      setSsoPending(false);
+      return;
+    }
+
+    setSsoPending(true);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const session = await studentApi.ssoLogin(urlToken);
+        if (cancelled) return;
+        studentApi.setSession(session);
+        studentApi.consumeSsoToken();
+        setStudentSessionVersion((value) => value + 1);
+        clearSsoParams();
+      } catch {
+        if (cancelled) return;
+        studentApi.clearSession();
+        clearSsoParams();
+      } finally {
+        if (!cancelled) setSsoPending(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const navigate = (destination: '/' | '/admin' | '/admin/tests' | '/admin/login'): void => {
     const nextPath = normalizePath(destination);
     window.history.pushState({}, '', withBase(nextPath));
@@ -72,7 +103,9 @@ function App(): React.JSX.Element | null {
     );
   if (!authenticated && path.startsWith('/admin')) return null;
   if (!path.startsWith('/admin'))
-    return <StudentHomePage onAdminLogin={() => navigate('/admin/login')} />;
+    return (
+      <StudentHomePage key={studentSessionVersion} onAdminLogin={() => navigate('/admin/login')} />
+    );
   if (path === '/admin/tests')
     return <AdminTestsPage onHome={() => navigate('/admin')} onLogout={logout} />;
   return (

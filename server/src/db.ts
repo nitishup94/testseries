@@ -108,11 +108,21 @@ export async function initializeDatabase(): Promise<void> {
     await connection.query(`CREATE TABLE IF NOT EXISTS test_attempts (
       id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, test_id INT UNSIGNED NOT NULL, student_id INT UNSIGNED NOT NULL,
       status ENUM('Draft','Completed') NOT NULL DEFAULT 'Draft', started_at DATETIME NOT NULL, submitted_at DATETIME NULL,
-      expires_at DATETIME NOT NULL, current_question SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+      expires_at DATETIME NOT NULL, remaining_time_seconds INT UNSIGNED NOT NULL DEFAULT 0, current_question SMALLINT UNSIGNED NOT NULL DEFAULT 1,
       score DECIMAL(8,2) NULL, correct_count SMALLINT UNSIGNED NULL, incorrect_count SMALLINT UNSIGNED NULL, unanswered_count SMALLINT UNSIGNED NULL,
       positive_marks DECIMAL(8,2) NULL, negative_marks DECIMAL(8,2) NULL, accuracy DECIMAL(6,2) NULL, percentage DECIMAL(6,2) NULL, time_taken_seconds INT UNSIGNED NULL,
       CONSTRAINT fk_attempts_test FOREIGN KEY (test_id) REFERENCES tests(id) ON DELETE CASCADE, CONSTRAINT uq_student_test_attempt UNIQUE (test_id, student_id)
     )`);
+    const [attemptColumns] = await connection.query<RowDataPacket[]>(
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'test_attempts' AND COLUMN_NAME = 'remaining_time_seconds'`,
+      [databaseName],
+    );
+    if (!attemptColumns.length) {
+      await connection.query(
+        'ALTER TABLE test_attempts ADD COLUMN remaining_time_seconds INT UNSIGNED NOT NULL DEFAULT 0 AFTER expires_at',
+      );
+    }
     await connection.query(`CREATE TABLE IF NOT EXISTS test_attempt_answers (
       id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, attempt_id INT UNSIGNED NOT NULL, question_id INT UNSIGNED NOT NULL,
       selected_answer ENUM('A','B','C','D') NULL, visited BOOLEAN NOT NULL DEFAULT FALSE, marked_for_review BOOLEAN NOT NULL DEFAULT FALSE, time_spent_seconds INT UNSIGNED NOT NULL DEFAULT 0,

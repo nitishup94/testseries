@@ -51,6 +51,57 @@ const displayDate = (value: string): string =>
     new Date(value),
   );
 
+function QuestionImage({
+  src,
+  alt,
+  className = '',
+  lazy = true,
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+  lazy?: boolean;
+}): React.JSX.Element {
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    setFailed(false);
+  }, [src]);
+
+  return (
+    <div
+      className={`relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50 ${className}`}
+    >
+      {loading && !failed && (
+        <div className="flex min-h-48 items-center justify-center bg-slate-100 px-4 text-center text-sm font-medium text-slate-600">
+          Please wait, question is loading...
+        </div>
+      )}
+      {!failed && (
+        <img
+          className={`h-auto w-full object-contain transition-opacity duration-200 ${loading ? 'opacity-0' : 'opacity-100'} ${className}`}
+          src={src}
+          alt={alt}
+          loading={lazy ? 'lazy' : 'eager'}
+          decoding="async"
+          onLoad={() => setLoading(false)}
+          onError={() => {
+            setLoading(false);
+            setFailed(true);
+          }}
+        />
+      )}
+      {failed && (
+        <div className="flex min-h-48 items-center justify-center bg-red-50 px-4 text-center text-sm font-medium text-red-700">
+          Question image could not be loaded.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function StudentHomePage({ onAdminLogin }: { onAdminLogin: () => void }): React.JSX.Element {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [attempt, setAttempt] = useState<Attempt | null>(null);
@@ -58,6 +109,23 @@ export function StudentHomePage({ onAdminLogin }: { onAdminLogin: () => void }):
   const [section, setSection] = useState<StudentTestSection>('pending');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(Boolean(studentApi.session()));
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const scrollToSection = (nextSection: StudentTestSection): void => {
+    setSection(nextSection);
+    requestAnimationFrame(() => {
+      const node = document.getElementById(`student-section-${nextSection}`);
+      if (node) {
+        node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+      }
+    });
+  };
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0 });
+  }, [view, attempt]);
   const loadDashboard = async (): Promise<void> => {
     setLoading(true);
     try {
@@ -81,8 +149,10 @@ export function StudentHomePage({ onAdminLogin }: { onAdminLogin: () => void }):
   const open = async (id: number, nextView: View = 'attempt'): Promise<void> => {
     setLoading(true);
     try {
-      setAttempt(await studentApi.attempt(id));
+      const nextAttempt = await studentApi.attempt(id);
+      setAttempt(nextAttempt);
       setView(nextView);
+      window.scrollTo({ top: 0, left: 0 });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not open test.');
     } finally {
@@ -92,6 +162,7 @@ export function StudentHomePage({ onAdminLogin }: { onAdminLogin: () => void }):
   const start = async (test: TestCard): Promise<void> => {
     try {
       const { attemptId } = await studentApi.start(test.id);
+      window.scrollTo({ top: 0, left: 0 });
       await open(attemptId);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not start test.');
@@ -120,22 +191,72 @@ export function StudentHomePage({ onAdminLogin }: { onAdminLogin: () => void }):
   const tests = dashboard?.[section] ?? [];
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6">
-          <Brand />
-          <div className="flex items-center gap-3">
-            <span className="hidden text-sm text-slate-600 sm:inline">
-              Hi, {dashboard?.student.name}
-            </span>
-            <button
-              className="button button-secondary"
-              onClick={() => {
-                studentApi.clearSession();
-                setDashboard(null);
-              }}
-            >
-              <LogOut size={16} /> Sign out
-            </button>
+      <header className="border-b bg-white shadow-sm">
+        <div className="mx-auto max-w-7xl px-3 py-3 sm:px-6">
+          <div className="flex items-center justify-between gap-3">
+            <Brand />
+
+            <div className="ml-auto hidden items-center gap-2 sm:flex">
+              <a
+                href="https://mystudyplanner.in/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100"
+              >
+                ← Planner
+              </a>
+              <div className="min-w-0 rounded-full bg-slate-100 px-2.5 py-1.5 text-sm text-slate-700">
+                <span className="truncate">Hi, {dashboard?.student.name}</span>
+              </div>
+              <button
+                className="button button-secondary flex items-center gap-2 px-3 py-2 text-sm"
+                onClick={() => {
+                  studentApi.clearSession();
+                  setDashboard(null);
+                }}
+              >
+                <LogOut size={16} />
+                <span>Sign out</span>
+              </button>
+            </div>
+
+            <div className="relative sm:hidden">
+              <button
+                type="button"
+                className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 shadow-sm"
+                onClick={() => setMobileMenuOpen((value) => !value)}
+                aria-label="Toggle student menu"
+              >
+                Menu
+              </button>
+
+              {mobileMenuOpen && (
+                <div className="absolute right-0 top-12 z-20 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+                  <a
+                    href="https://mystudyplanner.in/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 text-sm font-medium text-indigo-700"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    <span aria-hidden="true">←</span> Back to Study Planner
+                  </a>
+                  <div className="border-b border-slate-100 px-4 py-3 text-sm text-slate-700">
+                    Hi, {dashboard?.student.name}
+                  </div>
+                  <button
+                    className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      studentApi.clearSession();
+                      setDashboard(null);
+                    }}
+                  >
+                    <LogOut size={16} /> Sign out
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </header>
@@ -152,24 +273,24 @@ export function StudentHomePage({ onAdminLogin }: { onAdminLogin: () => void }):
             status="pending"
             count={dashboard?.pending.length ?? 0}
             active={section === 'pending'}
-            onClick={() => setSection('pending')}
+            onClick={() => scrollToSection('pending')}
           />
           <Summary
             title="Draft tests"
             status="draft"
             count={dashboard?.draft.length ?? 0}
             active={section === 'draft'}
-            onClick={() => setSection('draft')}
+            onClick={() => scrollToSection('draft')}
           />
           <Summary
             title="Completed tests"
             status="completed"
             count={dashboard?.completed.length ?? 0}
             active={section === 'completed'}
-            onClick={() => setSection('completed')}
+            onClick={() => scrollToSection('completed')}
           />
         </section>
-        <section className="mt-9">
+        <section id={`student-section-${section}`} className="mt-9">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-bold">
               {section[0].toUpperCase() + section.slice(1)} tests
@@ -326,6 +447,16 @@ function TestCardView({
       : () =>
           test.attemptId &&
           void onOpen(test.attemptId, section === 'completed' ? 'result' : 'attempt');
+  const remainingSeconds =
+    section === 'draft'
+      ? typeof test.remainingTimeSeconds === 'number'
+        ? Math.max(0, test.remainingTimeSeconds)
+        : test.expiresAt
+          ? Math.max(0, Math.ceil((new Date(test.expiresAt).getTime() - Date.now()) / 1000))
+          : null
+      : null;
+  const remainingUrgent = remainingSeconds !== null && remainingSeconds < 300;
+
   return (
     <article className="card p-5">
       <div className="flex items-start justify-between gap-3">
@@ -349,6 +480,14 @@ function TestCardView({
           {test.questionCount} questions
         </span>
         <span>{test.questionCount * test.marksPerQuestion} total marks</span>
+        {section === 'draft' && remainingSeconds !== null && (
+          <span
+            className={`flex items-center gap-2 ${remainingUrgent ? 'text-red-600' : 'text-amber-600'}`}
+          >
+            <Clock3 size={16} />
+            {formatTime(remainingSeconds)} left
+          </span>
+        )}
         {section === 'completed' && (
           <span>
             {Number(test.score).toFixed(2)} score · {Number(test.accuracy).toFixed(1)}%
@@ -388,23 +527,88 @@ function TestRunner({
   const [now, setNow] = useState(Date.now());
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
-  const question = attempt.questions[index];
-  const secondsLeft = Math.max(
-    0,
-    Math.floor((new Date(attempt.expires_at).getTime() - now) / 1000),
+  const [isActiveWindow, setIsActiveWindow] = useState(
+    () => document.visibilityState !== 'hidden' && document.hasFocus(),
   );
-  const save = async (updated = attempt, current = index): Promise<void> => {
-    await studentApi.saveProgress(updated.id, current + 1, updated.questions);
+  const [remainingTimeSeconds, setRemainingTimeSeconds] = useState(
+    Math.max(
+      0,
+      Number(
+        initial.remainingTimeSeconds ??
+          Math.floor((new Date(initial.expires_at).getTime() - Date.now()) / 1000),
+      ),
+    ),
+  );
+  const question = attempt.questions[index];
+  const secondsLeft = Math.max(0, remainingTimeSeconds);
+  const save = async (updated = attempt, current = index, freeze = false): Promise<void> => {
+    const nextRemaining = Math.max(0, remainingTimeSeconds);
+    const response = await studentApi.saveProgress(
+      updated.id,
+      current + 1,
+      updated.questions,
+      nextRemaining,
+      freeze,
+    );
+    if (typeof response.remainingTimeSeconds === 'number')
+      setRemainingTimeSeconds(response.remainingTimeSeconds);
+  };
+  const saveOnExit = (): void => {
+    void save(attempt, index, true);
   };
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+      setRemainingTimeSeconds((value) => Math.max(0, value - 1));
+    }, 1000);
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
+    const availabilityClosed =
+      new Date(attempt.availableTo ?? attempt.available_to ?? new Date().toISOString()).getTime() <=
+      Date.now();
+    if (availabilityClosed && !busy) {
+      void save(attempt, index, true).finally(() => onBack());
+    }
+  }, [attempt.availableTo, attempt.available_to, busy, index, onBack]);
+  useEffect(() => {
     const timer = window.setInterval(() => void save(), 15000);
     return () => window.clearInterval(timer);
-  }, [attempt, index]);
+  }, [attempt, index, remainingTimeSeconds]);
   useEffect(() => {
+    const handleVisibility = (): void => {
+      if (document.visibilityState === 'hidden') saveOnExit();
+    };
+    const handleBeforeUnload = (): void => {
+      saveOnExit();
+    };
+    const handlePageHide = (): void => {
+      saveOnExit();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handlePageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handlePageHide);
+    };
+  }, [attempt, index, remainingTimeSeconds]);
+  useEffect(() => {
+    const handleFocusChange = (): void => {
+      setIsActiveWindow(document.visibilityState !== 'hidden' && document.hasFocus());
+    };
+    document.addEventListener('visibilitychange', handleFocusChange);
+    window.addEventListener('focus', handleFocusChange);
+    window.addEventListener('blur', handleFocusChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleFocusChange);
+      window.removeEventListener('focus', handleFocusChange);
+      window.removeEventListener('blur', handleFocusChange);
+    };
+  }, []);
+  useEffect(() => {
+    if (!isActiveWindow) return undefined;
     const timer = window.setInterval(
       () =>
         setAttempt((value) => ({
@@ -418,7 +622,7 @@ function TestRunner({
       1000,
     );
     return () => window.clearInterval(timer);
-  }, [index]);
+  }, [index, isActiveWindow]);
   const update = (fn: (q: AttemptQuestion) => AttemptQuestion): void =>
     setAttempt((value) => ({
       ...value,
@@ -479,11 +683,13 @@ function TestRunner({
               {question.markedForReview ? 'Unmark review' : 'Mark for review'}
             </button>
           </div>
-          <img
-            className="mt-5 max-h-96 w-full object-contain"
-            src={question.imagePath}
-            alt={`Question ${question.questionNumber}`}
-          />
+          <div className="mt-5">
+            <QuestionImage
+              className="max-h-96 w-full"
+              src={question.imagePath}
+              alt={`Question ${question.questionNumber}`}
+            />
+          </div>
           <fieldset className="mt-6 grid gap-3">
             <legend className="sr-only">Select an answer</legend>
             {answers.map((letter) => (
@@ -655,42 +861,62 @@ function ResultView({
                   : status === 'Incorrect' && attempt.hasNegativeMarking
                     ? -Number(attempt.negativeMarksPerQuestion)
                     : 0;
+              const answerText = question.selectedAnswer ?? 'Not answered';
+              const isCorrect = question.selectedAnswer === question.correctAnswer;
+              const answerClassName = question.selectedAnswer
+                ? isCorrect
+                  ? 'font-bold text-emerald-700'
+                  : 'font-bold text-red-700'
+                : 'font-bold text-red-700';
+              const correctClassName = 'font-bold text-emerald-700';
+              const statusClassName =
+                status === 'Correct'
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : status === 'Incorrect'
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-amber-100 text-amber-800';
               return (
                 <article key={question.id} className="card p-5">
                   <div className="flex flex-wrap justify-between gap-3">
                     <h3 className="font-bold">Question {question.questionNumber}</h3>
-                    <span className="font-bold">
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-xs font-bold ${statusClassName}`}
+                    >
                       {status} · {marks} marks
                     </span>
                   </div>
-                  <img
-                    className="mt-4 max-h-96 w-full rounded-lg border border-slate-100 bg-slate-50 object-contain"
-                    src={question.imagePath}
-                    alt={`Question ${question.questionNumber}`}
-                    loading="lazy"
-                    decoding="async"
-                  />
+                  <div className="mt-4">
+                    <QuestionImage
+                      className="max-h-96 w-full rounded-lg border border-slate-100 bg-slate-50"
+                      src={question.imagePath}
+                      alt={`Question ${question.questionNumber}`}
+                    />
+                  </div>
                   <p className="mt-3 text-sm text-slate-600">
-                    Your answer: <b>{question.selectedAnswer ?? 'Not answered'}</b> · Correct
-                    answer: <b>{question.correctAnswer}</b>
+                    Your answer: <span className={answerClassName}>{answerText}</span> · Correct
+                    answer: <span className={correctClassName}>{question.correctAnswer}</span>
                   </p>
                   {stats && (
                     <div className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-5">
-                      <span>
+                      <span className="rounded-lg bg-emerald-50 px-2.5 py-2 font-medium text-emerald-800">
                         {stats.correctCount}/{stats.totalAttempts} correct (
                         {Math.round((stats.correctCount / Math.max(stats.totalAttempts, 1)) * 100)}
                         %)
                       </span>
-                      <span>
+                      <span className="rounded-lg bg-red-50 px-2.5 py-2 font-medium text-red-700">
                         {stats.incorrectCount}/{stats.totalAttempts} incorrect (
                         {Math.round(
                           (stats.incorrectCount / Math.max(stats.totalAttempts, 1)) * 100,
                         )}
                         %)
                       </span>
-                      <span>{stats.skippedCount} skipped</span>
-                      <span>Avg: {formatTime(stats.averageTimeSeconds)}</span>
-                      <span>
+                      <span className="rounded-lg bg-amber-50 px-2.5 py-2 font-medium text-amber-800">
+                        {stats.skippedCount} skipped
+                      </span>
+                      <span className="rounded-lg bg-sky-50 px-2.5 py-2 font-medium text-sky-700">
+                        Avg: {formatTime(stats.averageTimeSeconds)}
+                      </span>
+                      <span className="rounded-lg bg-violet-50 px-2.5 py-2 font-medium text-violet-700">
                         Top:{' '}
                         {stats.topPerformerTimeSeconds === null
                           ? '—'

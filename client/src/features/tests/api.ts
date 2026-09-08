@@ -39,6 +39,8 @@ export const testApi = {
   attempts: (testId: number): Promise<TestAttemptSummary[]> =>
     request(`/api/tests/${testId}/attempts`),
   get: (id: number): Promise<TestDraft> => request(`/api/tests/${id}`),
+  remove: (id: number): Promise<{ id: number; deleted: boolean; name: string }> =>
+    request(`/api/tests/${id}`, { method: 'DELETE' }),
   upload: (
     files: File[],
   ): Promise<Array<{ questionNumber: number; filename: string; imagePath: string }>> => {

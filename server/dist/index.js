@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs/promises';
 import cors from 'cors';
 import express from 'express';
 import multer from 'multer';
@@ -10,6 +11,8 @@ import { db, initializeDatabase, studyPlannerDb } from './db.js';
 const filePath = fileURLToPath(import.meta.url);
 const rootDirectory = path.resolve(path.dirname(filePath), '..');
 const uploadDirectory = path.join(rootDirectory, 'uploads');
+const publicUploadBasePath = process.env.PUBLIC_BASE_PATH ?? '/testseries/server';
+const resolveUploadUrl = (filename) => `${publicUploadBasePath}/uploads/${filename}`;
 const courses = ['UPSC', 'UPPCS', 'CGL', 'GATE', 'Others'];
 const answers = ['A', 'B', 'C', 'D'];
 const optionFormats = ['Alphabetic', 'Numeric', 'Roman'];
@@ -26,6 +29,7 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 app.use('/uploads', express.static(uploadDirectory));
+app.use(`${publicUploadBasePath}/uploads`, express.static(uploadDirectory));
 const jwtSecret = process.env.JWT_SECRET ?? 'development-only-secret-change-before-production';
 function requireAdmin(request, response, next) {
     const token = request.header('Authorization')?.replace(/^Bearer\s+/i, '');
@@ -135,11 +139,53 @@ app.post('/api/student/auth/login', async (request, response, next) => {
         next(error);
     }
 });
+app.post('/api/student/auth/studyplanner-sso', async (request, response, next) => {
+    try {
+        const { token } = request.body;
+        if (typeof token !== 'string' || !token.trim())
+            return void response.status(400).json({ message: 'StudyPlanner token is required.' });
+        const studyPlannerSecret = process.env.STUDYPLANNER_JWT_SECRET ?? 'mynameisnitish';
+        let payload;
+        try {
+            payload = jwt.verify(token, studyPlannerSecret);
+        }
+        catch {
+            return void response.status(401).json({ message: 'Invalid StudyPlanner token.' });
+        }
+        const email = String(payload.username ?? payload.email ?? '')
+            .trim()
+            .toLowerCase();
+        if (!email)
+            return void response
+                .status(400)
+                .json({ message: 'StudyPlanner token is missing user email.' });
+        const [users] = await studyPlannerDb.query('SELECT id, name, full_name AS fullName, email, pass, role, status, account_status AS accountStatus FROM users WHERE email=? LIMIT 1', [email]);
+        const user = users[0];
+        if (!user)
+            return void response.status(404).json({ message: 'User not found in Test Series.' });
+        const active = String(user.status ?? '').toLowerCase() !== 'inactive' &&
+            String(user.accountStatus ?? '').toLowerCase() !== 'inactive';
+        if (!active ||
+            ['admin', 'super-admin', 'super_admin'].includes(String(user.role).toLowerCase()))
+            return void response
+                .status(401)
+                .json({ message: 'This account is not allowed in Test Series.' });
+        const name = String(user.fullName || user.name || 'Student');
+        const sessionToken = jwt.sign({ kind: 'student', email: user.email, name }, jwtSecret, {
+            subject: String(user.id),
+            expiresIn: '8h',
+        });
+        response.json({ token: sessionToken, student: { id: user.id, name, email: user.email } });
+    }
+    catch (error) {
+        next(error);
+    }
+});
 app.use('/api/student', requireStudent);
 app.get('/api/student/dashboard', async (request, response, next) => {
     try {
         const studentId = request.student.id;
-        const [tests] = await db.query(`SELECT t.id,t.name,t.course,t.duration_minutes AS durationMinutes,t.marks_per_question AS marksPerQuestion,t.available_from AS availableFrom,t.available_to AS availableTo,COUNT(q.id) AS questionCount, a.id AS attemptId,a.status,a.score,a.accuracy,a.percentage FROM tests t LEFT JOIN questions q ON q.test_id=t.id LEFT JOIN test_attempts a ON a.test_id=t.id AND a.student_id=? WHERE t.status='Published' GROUP BY t.id,a.id ORDER BY t.created_at DESC`, [studentId]);
+        const [tests] = await db.query(`SELECT t.id,t.name,t.course,t.duration_minutes AS durationMinutes,t.marks_per_question AS marksPerQuestion,t.available_from AS availableFrom,t.available_to AS availableTo,COUNT(q.id) AS questionCount, a.id AS attemptId,a.status,a.expires_at AS expiresAt,a.score,a.accuracy,a.percentage FROM tests t LEFT JOIN questions q ON q.test_id=t.id LEFT JOIN test_attempts a ON a.test_id=t.id AND a.student_id=? WHERE t.status='Published' GROUP BY t.id,a.id ORDER BY t.created_at DESC`, [studentId]);
         const now = Date.now();
         const pending = tests.filter((t) => !t.attemptId &&
             new Date(t.availableFrom).getTime() <= now &&
@@ -177,8 +223,9 @@ app.post('/api/student/tests/:testId/start', async (request, response, next) => 
             return void response.status(409).json({ message: 'This test is already completed.' });
         let attemptId = existing[0]?.id;
         if (!attemptId) {
-            const expiresAt = new Date(Date.now() + Number(test.durationMinutes) * 60000);
-            const [result] = await db.execute('INSERT INTO test_attempts (test_id,student_id,started_at,expires_at) VALUES (?,?,NOW(),?)', [testId, studentId, expiresAt]);
+            const totalSeconds = Number(test.durationMinutes) * 60;
+            const expiresAt = new Date(Date.now() + totalSeconds * 1000);
+            const [result] = await db.execute('INSERT INTO test_attempts (test_id,student_id,started_at,expires_at,remaining_time_seconds) VALUES (?,?,NOW(),?,?)', [testId, studentId, expiresAt, totalSeconds]);
             attemptId = result.insertId;
         }
         response.json({ attemptId });
@@ -194,7 +241,13 @@ app.get('/api/student/attempts/:attemptId', async (request, response, next) => {
         if (!attempt)
             return void response.status(404).json({ message: 'Attempt not found.' });
         const [questions] = await db.execute(`SELECT q.id,q.question_number AS questionNumber,q.image_path AS imagePath,q.option_a AS optionA,q.option_b AS optionB,q.option_c AS optionC,q.option_d AS optionD,q.correct_answer AS correctAnswer,aa.selected_answer AS selectedAnswer,aa.visited,aa.marked_for_review AS markedForReview,COALESCE(aa.time_spent_seconds,0) AS timeSpentSeconds FROM questions q LEFT JOIN test_attempt_answers aa ON aa.question_id=q.id AND aa.attempt_id=? WHERE q.test_id=? ORDER BY q.question_number`, [attempt.id, attempt.test_id]);
-        response.json({ ...attempt, questions });
+        const remainingTimeSeconds = Number(attempt.remaining_time_seconds ??
+            Math.max(0, Math.ceil((new Date(attempt.expires_at).getTime() - Date.now()) / 1000)));
+        response.json({
+            ...attempt,
+            remainingTimeSeconds,
+            questions,
+        });
     }
     catch (error) {
         next(error);
@@ -202,14 +255,22 @@ app.get('/api/student/attempts/:attemptId', async (request, response, next) => {
 });
 app.put('/api/student/attempts/:attemptId/progress', async (request, response, next) => {
     try {
-        const { currentQuestion, answers } = request.body;
-        const [owned] = await db.execute("SELECT id FROM test_attempts WHERE id=? AND student_id=? AND status='Draft'", [request.params.attemptId, request.student.id]);
+        const { currentQuestion, answers, remainingTimeSeconds, freezeCountdown } = request.body;
+        const [owned] = await db.execute("SELECT id, expires_at, remaining_time_seconds FROM test_attempts WHERE id=? AND student_id=? AND status='Draft'", [request.params.attemptId, request.student.id]);
         if (!owned.length)
             return void response.status(404).json({ message: 'Draft attempt not found.' });
-        await db.execute('UPDATE test_attempts SET current_question=? WHERE id=?', [
-            currentQuestion,
-            request.params.attemptId,
-        ]);
+        const currentRemaining = remainingTimeSeconds !== undefined &&
+            remainingTimeSeconds !== null &&
+            Number.isFinite(Number(remainingTimeSeconds))
+            ? Math.max(0, Number(remainingTimeSeconds))
+            : Math.max(0, Math.ceil((new Date(owned[0].expires_at).getTime() - Date.now()) / 1000));
+        if (freezeCountdown) {
+            const frozenExpiresAt = new Date(Date.now() + currentRemaining * 1000);
+            await db.execute('UPDATE test_attempts SET current_question=?, expires_at=?, remaining_time_seconds=? WHERE id=?', [currentQuestion, frozenExpiresAt, currentRemaining, request.params.attemptId]);
+        }
+        else {
+            await db.execute('UPDATE test_attempts SET current_question=?, remaining_time_seconds=? WHERE id=?', [currentQuestion, currentRemaining, request.params.attemptId]);
+        }
         for (const a of answers)
             await db.execute('INSERT INTO test_attempt_answers (attempt_id,question_id,selected_answer,visited,marked_for_review,time_spent_seconds) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE selected_answer=VALUES(selected_answer),visited=VALUES(visited),marked_for_review=VALUES(marked_for_review),time_spent_seconds=VALUES(time_spent_seconds)', [
                 request.params.attemptId,
@@ -219,7 +280,7 @@ app.put('/api/student/attempts/:attemptId/progress', async (request, response, n
                 a.markedForReview,
                 a.timeSpentSeconds,
             ]);
-        response.json({ saved: true });
+        response.json({ saved: true, remainingTimeSeconds: currentRemaining });
     }
     catch (error) {
         next(error);
@@ -404,7 +465,7 @@ app.post('/api/uploads/questions', upload.array('images', 200), (request, respon
         return {
             questionNumber,
             filename: file.originalname,
-            imagePath: `/uploads/${file.filename}`,
+            imagePath: resolveUploadUrl(file.filename),
         };
     });
     if (uploaded.some((entry) => entry === null))
@@ -523,6 +584,50 @@ app.put('/api/tests/:id', async (request, response) => {
         });
     await saveTest(input, Number(request.params.id));
     response.json({ id: Number(request.params.id), status: 'Published' });
+});
+app.delete('/api/tests/:id', async (request, response, next) => {
+    try {
+        const testId = Number(request.params.id);
+        if (!Number.isInteger(testId) || testId <= 0)
+            return void response.status(400).json({ message: 'A valid test id is required.' });
+        const connection = await db.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [rows] = await connection.execute('SELECT id, name FROM tests WHERE id=?', [testId]);
+            if (!rows.length)
+                return void response.status(404).json({ message: 'Test not found.' });
+            const [questions] = await connection.execute('SELECT image_path AS imagePath FROM questions WHERE test_id=?', [testId]);
+            await connection.execute('DELETE FROM tests WHERE id=?', [testId]);
+            for (const question of questions) {
+                const imagePath = String(question.imagePath ?? '').trim();
+                if (!imagePath)
+                    continue;
+                const pathname = imagePath.startsWith('http') ? new URL(imagePath).pathname : imagePath;
+                const filename = path.basename(decodeURIComponent(pathname));
+                if (!filename)
+                    continue;
+                const filePath = path.join(uploadDirectory, filename);
+                try {
+                    await fs.unlink(filePath);
+                }
+                catch {
+                    // Ignore missing file or already removed files.
+                }
+            }
+            await connection.commit();
+            response.json({ id: testId, deleted: true, name: String(rows[0].name) });
+        }
+        catch (error) {
+            await connection.rollback();
+            throw error;
+        }
+        finally {
+            connection.release();
+        }
+    }
+    catch (error) {
+        next(error);
+    }
 });
 app.use((error, _request, response, _next) => {
     console.error(error);

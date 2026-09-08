@@ -2,6 +2,7 @@ import type { Answer } from '../tests/types';
 
 const API_BASE = '/testseries/server';
 const tokenKey = 'testseries.studentToken';
+const pendingSsoTokenKey = 'testseries.pendingSsoToken';
 
 export interface StudentSession {
   token: string;
@@ -10,10 +11,27 @@ export interface StudentSession {
 
 function readUrlToken(): string | null {
   if (typeof window === 'undefined') return null;
-  const token = new URLSearchParams(window.location.search).get('token');
+
+  const search = new URLSearchParams(window.location.search);
+  const token =
+    search.get('token') ?? search.get('auth_token') ?? localStorage.getItem(pendingSsoTokenKey);
   if (!token) return null;
+
   const looksLikeJwt = token.split('.').length === 3 && token.length > 20;
-  return looksLikeJwt ? token : null;
+  if (!looksLikeJwt) return null;
+
+  localStorage.setItem(pendingSsoTokenKey, token);
+
+  const nextUrl = new URL(window.location.href);
+  nextUrl.searchParams.delete('token');
+  nextUrl.searchParams.delete('auth_token');
+  window.history.replaceState(
+    {},
+    '',
+    `${nextUrl.pathname}${nextUrl.search ? `?${nextUrl.searchParams.toString()}` : ''}${nextUrl.hash}`,
+  );
+
+  return token;
 }
 export interface TestCard {
   id: number;
@@ -25,6 +43,8 @@ export interface TestCard {
   questionCount: number;
   availableFrom: string;
   availableTo: string;
+  expiresAt?: string;
+  remainingTimeSeconds?: number;
   status?: 'Draft' | 'Completed';
   score?: number;
   accuracy?: number;
@@ -58,6 +78,9 @@ export interface Attempt {
   status: 'Draft' | 'Completed';
   started_at: string;
   expires_at: string;
+  available_to?: string;
+  availableTo?: string;
+  remainingTimeSeconds?: number;
   current_question: number;
   durationMinutes: number;
   marksPerQuestion: number;
@@ -101,12 +124,28 @@ export const studentApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     }),
+  ssoLogin: (externalToken: string): Promise<StudentSession> =>
+    request('/api/student/auth/studyplanner-sso', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: externalToken }),
+    }),
   readUrlToken,
+  consumeSsoToken: (): string | null => {
+    const token = localStorage.getItem(pendingSsoTokenKey);
+    localStorage.removeItem(pendingSsoTokenKey);
+    return token;
+  },
   session: (): string | null => localStorage.getItem(tokenKey),
   setToken: (token: string): void => localStorage.setItem(tokenKey, token),
-  setSession: (session: StudentSession | { token: string }): void =>
-    localStorage.setItem(tokenKey, session.token),
-  clearSession: (): void => localStorage.removeItem(tokenKey),
+  setSession: (session: StudentSession | { token: string }): void => {
+    localStorage.setItem(tokenKey, session.token);
+    localStorage.removeItem(pendingSsoTokenKey);
+  },
+  clearSession: (): void => {
+    localStorage.removeItem(tokenKey);
+    localStorage.removeItem(pendingSsoTokenKey);
+  },
   dashboard: (): Promise<Dashboard> => request('/api/student/dashboard'),
   start: (testId: number): Promise<{ attemptId: number }> =>
     request(`/api/student/tests/${testId}/start`, { method: 'POST' }),
@@ -115,12 +154,16 @@ export const studentApi = {
     attemptId: number,
     currentQuestion: number,
     answers: AttemptQuestion[],
-  ): Promise<{ saved: boolean }> =>
+    remainingTimeSeconds?: number,
+    freezeCountdown = false,
+  ): Promise<{ saved: boolean; remainingTimeSeconds?: number }> =>
     request(`/api/student/attempts/${attemptId}/progress`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         currentQuestion,
+        remainingTimeSeconds,
+        freezeCountdown,
         answers: answers.map(
           ({ id, selectedAnswer, visited, markedForReview, timeSpentSeconds }) => ({
             questionId: id,
