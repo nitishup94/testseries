@@ -19,7 +19,7 @@ Part 1 implements the admin test creation and management area.
    cd server && npm run dev
    ```
 
-The API automatically creates the configured database and idempotently migrates the `tests` and `questions` tables before it starts. The admin UI runs at `http://localhost:5173`; its API is proxied to Express at port 4000.
+The API automatically creates the configured database and idempotently migrates the `tests` and `questions` tables before it starts. The admin UI runs at `http://localhost:5173`; its API is proxied to Express at port 4001.
 
 Each project has independent package scripts. Run `npm run format:check` and `npm run build` from either `client/` or `server/`.
 

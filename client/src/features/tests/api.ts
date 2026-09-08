@@ -1,5 +1,6 @@
 import type { TestAttemptSummary, TestDraft, TestSummary } from './types';
 
+const API_BASE = '/testseries/server';
 const tokenKey = 'testseries.adminToken';
 const usernameKey = 'testseries.adminUsername';
 export interface AdminSession {
@@ -11,7 +12,8 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const token = localStorage.getItem(tokenKey);
   const headers = new Headers(options?.headers);
   if (token) headers.set('Authorization', `Bearer ${token}`);
-  const response = await fetch(url, { ...options, headers });
+  const normalizedUrl = url.startsWith('http') ? url : `${API_BASE}${url}`;
+  const response = await fetch(normalizedUrl, { ...options, headers });
   const data = await response.json();
   if (!response.ok) throw new Error(data.message ?? 'Request failed.');
   return data as T;

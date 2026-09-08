@@ -12,6 +12,9 @@ import { db, initializeDatabase, studyPlannerDb } from './db.js';
 const filePath = fileURLToPath(import.meta.url);
 const rootDirectory = path.resolve(path.dirname(filePath), '..');
 const uploadDirectory = path.join(rootDirectory, 'uploads');
+const publicUploadBasePath = process.env.PUBLIC_BASE_PATH ?? '/testseries/server';
+const resolveUploadUrl = (filename: string): string =>
+  `${publicUploadBasePath}/uploads/${filename}`;
 const courses = ['UPSC', 'UPPCS', 'CGL', 'GATE', 'Others'] as const;
 const answers = ['A', 'B', 'C', 'D'] as const;
 const optionFormats = ['Alphabetic', 'Numeric', 'Roman'] as const;
@@ -62,6 +65,7 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 app.use('/uploads', express.static(uploadDirectory));
+app.use(`${publicUploadBasePath}/uploads`, express.static(uploadDirectory));
 const jwtSecret = process.env.JWT_SECRET ?? 'development-only-secret-change-before-production';
 
 function requireAdmin(
@@ -535,7 +539,7 @@ app.post(
       return {
         questionNumber,
         filename: file.originalname,
-        imagePath: `/uploads/${file.filename}`,
+        imagePath: resolveUploadUrl(file.filename),
       };
     });
     if (uploaded.some((entry) => entry === null))
@@ -697,8 +701,8 @@ app.use((error: Error, _request: Request, response: Response, _next: express.Nex
 });
 async function startServer(): Promise<void> {
   await initializeDatabase();
-  app.listen(Number(process.env.PORT ?? 4000), () =>
-    console.log('Database migrated; API listening on port 4000'),
+  app.listen(Number(process.env.PORT ?? 4001), () =>
+    console.log('Database migrated; API listening on port 4001'),
   );
 }
 

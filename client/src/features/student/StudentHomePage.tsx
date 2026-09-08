@@ -64,7 +64,13 @@ export function StudentHomePage({ onAdminLogin }: { onAdminLogin: () => void }):
       setDashboard(await studentApi.dashboard());
       setError('');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load dashboard.');
+      const message = e instanceof Error ? e.message : 'Could not load dashboard.';
+      studentApi.clearSession();
+      setDashboard(null);
+      setError(message);
+      if (message.toLowerCase().includes('expired') || message.toLowerCase().includes('sign in')) {
+        setError('Your student session has expired. Please sign in again.');
+      }
     } finally {
       setLoading(false);
     }

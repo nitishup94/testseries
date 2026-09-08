@@ -530,7 +530,7 @@ app.use((error, _request, response, _next) => {
 });
 async function startServer() {
     await initializeDatabase();
-    app.listen(Number(process.env.PORT ?? 4000), () => console.log('Database migrated; API listening on port 4000'));
+    app.listen(Number(process.env.PORT ?? 4001), () => console.log('Database migrated; API listening on port 4001'));
 }
 void startServer().catch((error) => {
     console.error('Unable to migrate the database or start the API.', error);

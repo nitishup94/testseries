@@ -8,6 +8,16 @@ import { AdminTestsPage } from './features/tests/AdminTestsPage';
 import { testApi } from './features/tests/api';
 import './styles.css';
 
+const APP_BASE = '/testseries';
+const normalizePath = (value: string): string => {
+  const pathname = value.startsWith(APP_BASE) ? value.slice(APP_BASE.length) || '/' : value;
+  return pathname.startsWith('/') ? pathname : `/${pathname}`;
+};
+const withBase = (pathname: string): string => {
+  const clean = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  return `${APP_BASE}${clean === '/' ? '' : clean}`;
+};
+
 function App(): React.JSX.Element | null {
   const urlToken = studentApi.readUrlToken();
   if (urlToken && !studentApi.session()) {
@@ -20,15 +30,25 @@ function App(): React.JSX.Element | null {
       `${nextUrl.pathname}${nextUrl.search ? `?${nextUrl.searchParams.toString()}` : ''}${nextUrl.hash}`,
     );
   }
-  const [path, setPath] = useState(window.location.pathname);
+  if (window.location.search.includes('token=') && !urlToken) {
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.delete('token');
+    window.history.replaceState(
+      {},
+      '',
+      `${nextUrl.pathname}${nextUrl.search ? `?${nextUrl.searchParams.toString()}` : ''}${nextUrl.hash}`,
+    );
+  }
+  const [path, setPath] = useState(() => normalizePath(window.location.pathname));
   const [username, setUsername] = useState(testApi.getUsername() ?? 'Administrator');
   const authenticated = Boolean(testApi.getToken());
   const navigate = (destination: '/' | '/admin' | '/admin/tests' | '/admin/login'): void => {
-    window.history.pushState({}, '', destination);
-    setPath(destination);
+    const nextPath = normalizePath(destination);
+    window.history.pushState({}, '', withBase(nextPath));
+    setPath(nextPath);
   };
   useEffect(() => {
-    const onPopState = (): void => setPath(window.location.pathname);
+    const onPopState = (): void => setPath(normalizePath(window.location.pathname));
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);

@@ -5,5 +5,14 @@ import tailwindcss from '@tailwindcss/vite';
 export default defineConfig({
   base: '/testseries/',
   plugins: [react(), tailwindcss()],
-  server: { proxy: { '/api': 'http://localhost:4000', '/uploads': 'http://localhost:4000' } },
+  server: {
+    proxy: {
+      '/testseries/server': {
+        target: 'https://nitish.mystudyplanner.in/testseries/server',
+        changeOrigin: true,
+        rewrite: (requestPath) => requestPath.replace(/^\/testseries\/server/, ''),
+      },
+      '/uploads': 'https://nitish.mystudyplanner.in/testseries/server',
+    },
+  },
 });

@@ -1,5 +1,6 @@
 import type { Answer } from '../tests/types';
 
+const API_BASE = '/testseries/server';
 const tokenKey = 'testseries.studentToken';
 
 export interface StudentSession {
@@ -9,7 +10,10 @@ export interface StudentSession {
 
 function readUrlToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return new URLSearchParams(window.location.search).get('token');
+  const token = new URLSearchParams(window.location.search).get('token');
+  if (!token) return null;
+  const looksLikeJwt = token.split('.').length === 3 && token.length > 20;
+  return looksLikeJwt ? token : null;
 }
 export interface TestCard {
   id: number;
@@ -84,7 +88,8 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers);
   const token = localStorage.getItem(tokenKey);
   if (token) headers.set('Authorization', `Bearer ${token}`);
-  const response = await fetch(url, { ...options, headers });
+  const normalizedUrl = url.startsWith('http') ? url : `${API_BASE}${url}`;
+  const response = await fetch(normalizedUrl, { ...options, headers });
   const data = await response.json();
   if (!response.ok) throw new Error(data.message ?? 'Request failed.');
   return data as T;
