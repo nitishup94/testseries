@@ -66,45 +66,288 @@ function QuestionImage({
 }): React.JSX.Element {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [zoomOpen, setZoomOpen] = useState(false);
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const pointerMapRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
+  const pinchRef = useRef<{
+    startDistance: number;
+    startScale: number;
+    startOffsetX: number;
+    startOffsetY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
+
+  const clampScale = (value: number): number => Math.min(6, Math.max(1, Number(value.toFixed(3))));
 
   useEffect(() => {
     setLoading(true);
     setFailed(false);
+    setScale(1);
+    setOffset({ x: 0, y: 0 });
+    pointerMapRef.current.clear();
+    dragRef.current = null;
+    pinchRef.current = null;
   }, [src]);
 
+  useEffect(() => {
+    if (!zoomOpen) {
+      setScale(1);
+      setOffset({ x: 0, y: 0 });
+      pointerMapRef.current.clear();
+      dragRef.current = null;
+      pinchRef.current = null;
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setZoomOpen(false);
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [zoomOpen]);
+
+  const updateZoom = (nextScale: number, focusX?: number, focusY?: number): void => {
+    const previousScale = scale;
+    const boundedScale = clampScale(nextScale);
+
+    if (focusX === undefined || focusY === undefined) {
+      setScale(boundedScale);
+      if (boundedScale === 1) setOffset({ x: 0, y: 0 });
+      return;
+    }
+
+    setScale(boundedScale);
+    setOffset((current) => {
+      const ratio = boundedScale / Math.max(previousScale, 1e-6);
+      return {
+        x: focusX - (focusX - current.x) * ratio,
+        y: focusY - (focusY - current.y) * ratio,
+      };
+    });
+  };
+
   return (
-    <div
-      className={`relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50 ${className}`}
-    >
-      {loading && !failed && (
-        <div className="flex min-h-48 items-center justify-center bg-slate-100 px-4 text-center text-sm font-medium text-slate-600">
-          Please wait, question is loading...
+    <>
+      <button
+        type="button"
+        className={`relative block w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-50 text-left ${className}`}
+        onClick={() => setZoomOpen(true)}
+        aria-label={`Open ${alt} in zoom view`}
+      >
+        {loading && !failed && (
+          <div className="flex min-h-48 items-center justify-center bg-slate-100 px-4 text-center text-sm font-medium text-slate-600">
+            Please wait, question is loading...
+          </div>
+        )}
+        {!failed && (
+          <img
+            className={`h-auto w-full cursor-zoom-in object-contain transition-opacity duration-200 ${loading ? 'opacity-0' : 'opacity-100'} ${className}`}
+            src={src}
+            alt={alt}
+            loading={lazy ? 'lazy' : 'eager'}
+            decoding="async"
+            onLoad={() => {
+              setLoading(false);
+              onReady?.();
+            }}
+            onError={() => {
+              setLoading(false);
+              setFailed(true);
+              onReady?.();
+            }}
+          />
+        )}
+        {failed && (
+          <div className="flex min-h-48 items-center justify-center bg-red-50 px-4 text-center text-sm font-medium text-red-700">
+            Question image could not be loaded.
+          </div>
+        )}
+      </button>
+
+      {zoomOpen && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4"
+          onClick={() => setZoomOpen(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="relative h-[92vh] w-[95vw] max-w-7xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="text-sm font-semibold text-slate-700">Image zoom</p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="button button-secondary px-3 py-2 text-sm"
+                  onClick={() => updateZoom(scale - 0.25)}
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  className="button button-secondary px-3 py-2 text-sm"
+                  onClick={() => updateZoom(scale + 0.25)}
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  className="button button-secondary px-3 py-2 text-sm"
+                  onClick={() => {
+                    setScale(1);
+                    setOffset({ x: 0, y: 0 });
+                  }}
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  className="button button-primary px-3 py-2 text-sm"
+                  onClick={() => setZoomOpen(false)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="relative flex h-[80vh] w-full items-center justify-center overflow-hidden bg-slate-100 p-2 sm:p-4">
+              <div className="flex flex-col items-center gap-3">
+                <div
+                  className="relative"
+                  style={{
+                    touchAction: 'none',
+                    cursor: scale > 1 ? 'grab' : 'default',
+                    userSelect: 'none',
+                  }}
+                  onWheel={(event) => {
+                    event.preventDefault();
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    const focusX = event.clientX - rect.left;
+                    const focusY = event.clientY - rect.top;
+                    const zoomFactor = event.deltaY < 0 ? 1.12 : 0.9;
+                    updateZoom(scale * zoomFactor, focusX, focusY);
+                  }}
+                  onPointerDown={(event) => {
+                    if (event.pointerType === 'mouse' && event.button !== 0) return;
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    pointerMapRef.current.set(event.pointerId, {
+                      x: event.clientX,
+                      y: event.clientY,
+                    });
+
+                    if (pointerMapRef.current.size === 1 && scale > 1) {
+                      dragRef.current = {
+                        pointerId: event.pointerId,
+                        startX: event.clientX,
+                        startY: event.clientY,
+                        originX: offset.x,
+                        originY: offset.y,
+                      };
+                    }
+
+                    if (pointerMapRef.current.size >= 2) {
+                      const points = [...pointerMapRef.current.values()];
+                      const distance = Math.hypot(
+                        points[0].x - points[1].x,
+                        points[0].y - points[1].y,
+                      );
+                      const centerX = (points[0].x + points[1].x) / 2;
+                      const centerY = (points[0].y + points[1].y) / 2;
+
+                      pinchRef.current = {
+                        startDistance: distance,
+                        startScale: scale,
+                        startOffsetX: offset.x,
+                        startOffsetY: offset.y,
+                        originX: centerX,
+                        originY: centerY,
+                      };
+                      dragRef.current = null;
+                    }
+                  }}
+                  onPointerMove={(event) => {
+                    if (!pointerMapRef.current.has(event.pointerId)) return;
+                    pointerMapRef.current.set(event.pointerId, {
+                      x: event.clientX,
+                      y: event.clientY,
+                    });
+
+                    if (pointerMapRef.current.size === 1 && dragRef.current && scale > 1) {
+                      const dx = event.clientX - dragRef.current.startX;
+                      const dy = event.clientY - dragRef.current.startY;
+                      setOffset({
+                        x: dragRef.current.originX + dx,
+                        y: dragRef.current.originY + dy,
+                      });
+                      return;
+                    }
+
+                    if (pointerMapRef.current.size >= 2 && pinchRef.current) {
+                      const points = [...pointerMapRef.current.values()];
+                      const distance = Math.hypot(
+                        points[0].x - points[1].x,
+                        points[0].y - points[1].y,
+                      );
+                      const centerX = (points[0].x + points[1].x) / 2;
+                      const centerY = (points[0].y + points[1].y) / 2;
+                      const ratio = distance / Math.max(pinchRef.current.startDistance, 1);
+                      const nextScale = clampScale(pinchRef.current.startScale * ratio);
+
+                      setScale(nextScale);
+                      setOffset({
+                        x:
+                          centerX -
+                          (centerX - pinchRef.current.startOffsetX) *
+                            (nextScale / pinchRef.current.startScale),
+                        y:
+                          centerY -
+                          (centerY - pinchRef.current.startOffsetY) *
+                            (nextScale / pinchRef.current.startScale),
+                      });
+                    }
+                  }}
+                  onPointerUp={(event) => {
+                    pointerMapRef.current.delete(event.pointerId);
+                    dragRef.current = null;
+                    pinchRef.current = null;
+                  }}
+                  onPointerCancel={(event) => {
+                    pointerMapRef.current.delete(event.pointerId);
+                    dragRef.current = null;
+                    pinchRef.current = null;
+                  }}
+                >
+                  <img
+                    src={src}
+                    alt={alt}
+                    draggable={false}
+                    className="block h-auto w-full max-h-[78vh] max-w-none select-none object-contain"
+                    style={{
+                      transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+                      transformOrigin: '0 0',
+                      transition: 'none',
+                      willChange: 'transform',
+                      cursor: scale > 1 ? 'grab' : 'default',
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
-      {!failed && (
-        <img
-          className={`h-auto w-full object-contain transition-opacity duration-200 ${loading ? 'opacity-0' : 'opacity-100'} ${className}`}
-          src={src}
-          alt={alt}
-          loading={lazy ? 'lazy' : 'eager'}
-          decoding="async"
-          onLoad={() => {
-            setLoading(false);
-            onReady?.();
-          }}
-          onError={() => {
-            setLoading(false);
-            setFailed(true);
-            onReady?.();
-          }}
-        />
-      )}
-      {failed && (
-        <div className="flex min-h-48 items-center justify-center bg-red-50 px-4 text-center text-sm font-medium text-red-700">
-          Question image could not be loaded.
-        </div>
-      )}
-    </div>
+    </>
   );
 }
 
@@ -116,6 +359,7 @@ export function StudentHomePage({ onAdminLogin }: { onAdminLogin: () => void }):
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(Boolean(studentApi.session()));
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [search, setSearch] = useState('');
 
   const scrollToSection = (nextSection: StudentTestSection): void => {
     setSection(nextSection);
@@ -194,7 +438,11 @@ export function StudentHomePage({ onAdminLogin }: { onAdminLogin: () => void }):
       />
     );
   if (view === 'result' && attempt) return <ResultView attempt={attempt} onBack={back} />;
-  const tests = dashboard?.[section] ?? [];
+  const allTests = dashboard?.[section] ?? [];
+  const normalizedSearch = search.trim().toLowerCase();
+  const tests = normalizedSearch
+    ? allTests.filter((test) => test.name.toLowerCase().includes(normalizedSearch))
+    : allTests;
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
       <header className="border-b bg-white shadow-sm">
@@ -273,29 +521,43 @@ export function StudentHomePage({ onAdminLogin }: { onAdminLogin: () => void }):
           Pick up your practice, review results, and spot your progress.
         </p>
         {error && <p className="mt-5 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-        <section className="mt-7 grid gap-4 md:grid-cols-3">
-          <Summary
-            title="Pending tests"
-            status="pending"
-            count={dashboard?.pending.length ?? 0}
-            active={section === 'pending'}
-            onClick={() => scrollToSection('pending')}
-          />
-          <Summary
-            title="Draft tests"
-            status="draft"
-            count={dashboard?.draft.length ?? 0}
-            active={section === 'draft'}
-            onClick={() => scrollToSection('draft')}
-          />
-          <Summary
-            title="Completed tests"
-            status="completed"
-            count={dashboard?.completed.length ?? 0}
-            active={section === 'completed'}
-            onClick={() => scrollToSection('completed')}
-          />
-        </section>
+        <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <section className="grid w-full gap-4 md:grid-cols-3">
+            <Summary
+              title="Pending tests"
+              status="pending"
+              count={dashboard?.pending.length ?? 0}
+              active={section === 'pending'}
+              onClick={() => scrollToSection('pending')}
+            />
+            <Summary
+              title="Draft tests"
+              status="draft"
+              count={dashboard?.draft.length ?? 0}
+              active={section === 'draft'}
+              onClick={() => scrollToSection('draft')}
+            />
+            <Summary
+              title="Completed tests"
+              status="completed"
+              count={dashboard?.completed.length ?? 0}
+              active={section === 'completed'}
+              onClick={() => scrollToSection('completed')}
+            />
+          </section>
+        </div>
+        <div className="mt-6">
+          <label className="field">
+            <span className="sr-only">Search tests by name</span>
+            <input
+              className="input"
+              type="search"
+              value={search}
+              placeholder="Search test by name..."
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </label>
+        </div>
         <section id={`student-section-${section}`} className="mt-9">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-bold">
@@ -318,7 +580,9 @@ export function StudentHomePage({ onAdminLogin }: { onAdminLogin: () => void }):
             </div>
           ) : (
             <div className="card mt-4 p-8 text-center text-slate-600">
-              No {section} tests right now.
+              {normalizedSearch
+                ? `No ${section} tests match “${search.trim()}”.`
+                : `No ${section} tests right now.`}
             </div>
           )}
         </section>
@@ -794,7 +1058,7 @@ function TestRunner({
             <Send size={16} /> Submit test
           </button>
           <button
-            className="mt-4 w-full text-sm font-semibold text-slate-600"
+            className="button button-primary mt-4 w-full"
             onClick={() => void save().then(onBack)}
           >
             Save and exit
