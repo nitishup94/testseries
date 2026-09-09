@@ -254,7 +254,17 @@ app.get('/api/student/dashboard', async (request: StudentRequest, response, next
         new Date(t.availableFrom).getTime() <= now &&
         new Date(t.availableTo).getTime() >= now,
     );
-    const draft = tests.filter((t) => t.status === 'Draft');
+    const draft = tests
+      .filter((t) => t.status === 'Draft')
+      .map((t) => ({
+        ...t,
+        remainingTimeSeconds:
+          t.remainingTimeSeconds !== null && t.remainingTimeSeconds !== undefined
+            ? Math.max(0, Number(t.remainingTimeSeconds))
+            : t.expiresAt
+              ? Math.max(0, Math.ceil((new Date(t.expiresAt).getTime() - now) / 1000))
+              : null,
+      }));
     const completed = tests.filter((t) => t.status === 'Completed');
     response.json({
       student: request.student,

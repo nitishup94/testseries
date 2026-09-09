@@ -39,16 +39,16 @@ export interface TestCard {
   name: string;
   course: string;
   durationMinutes: number;
-  marksPerQuestion: number;
+  marksPerQuestion: number | string;
   questionCount: number;
   availableFrom: string;
   availableTo: string;
   expiresAt?: string;
-  remainingTimeSeconds?: number;
+  remainingTimeSeconds?: number | string | null;
   status?: 'Draft' | 'Completed';
-  score?: number;
-  accuracy?: number;
-  percentage?: number;
+  score?: number | null;
+  accuracy?: number | null;
+  percentage?: number | null;
 }
 export interface Dashboard {
   student: StudentSession['student'];

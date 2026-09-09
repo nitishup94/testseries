@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -56,11 +56,13 @@ function QuestionImage({
   alt,
   className = '',
   lazy = true,
+  onReady,
 }: {
   src: string;
   alt: string;
   className?: string;
   lazy?: boolean;
+  onReady?: () => void;
 }): React.JSX.Element {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -86,10 +88,14 @@ function QuestionImage({
           alt={alt}
           loading={lazy ? 'lazy' : 'eager'}
           decoding="async"
-          onLoad={() => setLoading(false)}
+          onLoad={() => {
+            setLoading(false);
+            onReady?.();
+          }}
           onError={() => {
             setLoading(false);
             setFailed(true);
+            onReady?.();
           }}
         />
       )}
@@ -441,21 +447,36 @@ function TestCardView({
   onStart: (test: TestCard) => Promise<void>;
   onOpen: (id: number, view?: View) => Promise<void>;
 }): React.JSX.Element {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const action =
     section === 'pending'
       ? () => void onStart(test)
       : () =>
           test.attemptId &&
           void onOpen(test.attemptId, section === 'completed' ? 'result' : 'attempt');
+  const savedRemainingSeconds =
+    section === 'draft' &&
+    test.remainingTimeSeconds !== undefined &&
+    test.remainingTimeSeconds !== null
+      ? Number(test.remainingTimeSeconds)
+      : NaN;
   const remainingSeconds =
     section === 'draft'
-      ? typeof test.remainingTimeSeconds === 'number'
-        ? Math.max(0, test.remainingTimeSeconds)
+      ? Number.isFinite(savedRemainingSeconds)
+        ? Math.max(0, savedRemainingSeconds)
         : test.expiresAt
-          ? Math.max(0, Math.ceil((new Date(test.expiresAt).getTime() - Date.now()) / 1000))
+          ? Math.max(0, Math.ceil((new Date(test.expiresAt).getTime() - now) / 1000))
           : null
       : null;
-  const remainingUrgent = remainingSeconds !== null && remainingSeconds < 300;
+  const remainingUrgent =
+    remainingSeconds !== null && remainingSeconds > 0 && remainingSeconds < 300;
+  const marksPerQuestion = Number(test.marksPerQuestion ?? 0);
 
   return (
     <article className="card p-5">
@@ -479,13 +500,13 @@ function TestCardView({
           <BookOpen size={16} />
           {test.questionCount} questions
         </span>
-        <span>{test.questionCount * test.marksPerQuestion} total marks</span>
+        <span>{test.questionCount * marksPerQuestion} total marks</span>
         {section === 'draft' && remainingSeconds !== null && (
           <span
             className={`flex items-center gap-2 ${remainingUrgent ? 'text-red-600' : 'text-amber-600'}`}
           >
             <Clock3 size={16} />
-            {formatTime(remainingSeconds)} left
+            {remainingSeconds > 0 ? `${formatTime(remainingSeconds)} left` : 'Expired'}
           </span>
         )}
         {section === 'completed' && (
@@ -539,8 +560,19 @@ function TestRunner({
       ),
     ),
   );
+  const headerRef = useRef<HTMLElement | null>(null);
   const question = attempt.questions[index];
   const secondsLeft = Math.max(0, remainingTimeSeconds);
+
+  const scrollToHeader = (): void => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+    requestAnimationFrame(() => {
+      if (headerRef.current) {
+        headerRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  };
+
   const save = async (updated = attempt, current = index, freeze = false): Promise<void> => {
     const nextRemaining = Math.max(0, remainingTimeSeconds);
     const response = await studentApi.saveProgress(
@@ -557,16 +589,19 @@ function TestRunner({
     void save(attempt, index, true);
   };
   useEffect(() => {
+    if (!isActiveWindow) return undefined;
+
     const timer = window.setInterval(() => {
       setNow(Date.now());
       setRemainingTimeSeconds((value) => Math.max(0, value - 1));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [isActiveWindow]);
   useEffect(() => {
-    const availabilityClosed =
-      new Date(attempt.availableTo ?? attempt.available_to ?? new Date().toISOString()).getTime() <=
-      Date.now();
+    const availabilityDeadline = attempt.availableTo ?? attempt.available_to;
+    if (!availabilityDeadline) return;
+
+    const availabilityClosed = new Date(availabilityDeadline).getTime() <= Date.now();
     if (availabilityClosed && !busy) {
       void save(attempt, index, true).finally(() => onBack());
     }
@@ -640,6 +675,9 @@ function TestRunner({
     };
     setAttempt(updated);
     setIndex(target);
+    requestAnimationFrame(() => {
+      scrollToHeader();
+    });
     await save(updated, target);
   };
   const submit = async (): Promise<void> => {
@@ -657,7 +695,7 @@ function TestRunner({
   }, [secondsLeft]);
   return (
     <main className="min-h-screen bg-slate-50">
-      <header className="sticky top-0 z-10 border-b bg-white">
+      <header ref={headerRef} className="sticky top-0 z-10 border-b bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div>
             <p className="text-sm font-bold">{attempt.name}</p>

@@ -185,12 +185,21 @@ app.use('/api/student', requireStudent);
 app.get('/api/student/dashboard', async (request, response, next) => {
     try {
         const studentId = request.student.id;
-        const [tests] = await db.query(`SELECT t.id,t.name,t.course,t.duration_minutes AS durationMinutes,t.marks_per_question AS marksPerQuestion,t.available_from AS availableFrom,t.available_to AS availableTo,COUNT(q.id) AS questionCount, a.id AS attemptId,a.status,a.expires_at AS expiresAt,a.score,a.accuracy,a.percentage FROM tests t LEFT JOIN questions q ON q.test_id=t.id LEFT JOIN test_attempts a ON a.test_id=t.id AND a.student_id=? WHERE t.status='Published' GROUP BY t.id,a.id ORDER BY t.created_at DESC`, [studentId]);
+        const [tests] = await db.query(`SELECT t.id,t.name,t.course,t.duration_minutes AS durationMinutes,t.marks_per_question AS marksPerQuestion,t.available_from AS availableFrom,t.available_to AS availableTo,COUNT(q.id) AS questionCount, a.id AS attemptId,a.status,a.expires_at AS expiresAt,a.remaining_time_seconds AS remainingTimeSeconds,a.score,a.accuracy,a.percentage FROM tests t LEFT JOIN questions q ON q.test_id=t.id LEFT JOIN test_attempts a ON a.test_id=t.id AND a.student_id=? WHERE t.status='Published' GROUP BY t.id,a.id ORDER BY t.created_at DESC`, [studentId]);
         const now = Date.now();
         const pending = tests.filter((t) => !t.attemptId &&
             new Date(t.availableFrom).getTime() <= now &&
             new Date(t.availableTo).getTime() >= now);
-        const draft = tests.filter((t) => t.status === 'Draft');
+        const draft = tests
+            .filter((t) => t.status === 'Draft')
+            .map((t) => ({
+            ...t,
+            remainingTimeSeconds: t.remainingTimeSeconds !== null && t.remainingTimeSeconds !== undefined
+                ? Math.max(0, Number(t.remainingTimeSeconds))
+                : t.expiresAt
+                    ? Math.max(0, Math.ceil((new Date(t.expiresAt).getTime() - now) / 1000))
+                    : null,
+        }));
         const completed = tests.filter((t) => t.status === 'Completed');
         response.json({
             student: request.student,
@@ -236,7 +245,7 @@ app.post('/api/student/tests/:testId/start', async (request, response, next) => 
 });
 app.get('/api/student/attempts/:attemptId', async (request, response, next) => {
     try {
-        const [attempts] = await db.execute(`SELECT a.*,t.name,t.course,t.duration_minutes AS durationMinutes,t.option_format AS optionFormat,t.marks_per_question AS marksPerQuestion,t.has_negative_marking AS hasNegativeMarking,t.negative_marks_per_question AS negativeMarksPerQuestion FROM test_attempts a JOIN tests t ON t.id=a.test_id WHERE a.id=? AND a.student_id=?`, [request.params.attemptId, request.student.id]);
+        const [attempts] = await db.execute(`SELECT a.*,t.name,t.course,t.duration_minutes AS durationMinutes,t.available_to AS availableTo,t.option_format AS optionFormat,t.marks_per_question AS marksPerQuestion,t.has_negative_marking AS hasNegativeMarking,t.negative_marks_per_question AS negativeMarksPerQuestion FROM test_attempts a JOIN tests t ON t.id=a.test_id WHERE a.id=? AND a.student_id=?`, [request.params.attemptId, request.student.id]);
         const attempt = attempts[0];
         if (!attempt)
             return void response.status(404).json({ message: 'Attempt not found.' });
@@ -288,7 +297,7 @@ app.put('/api/student/attempts/:attemptId/progress', async (request, response, n
 });
 app.post('/api/student/attempts/:attemptId/submit', async (request, response, next) => {
     try {
-        const [rows] = await db.execute(`SELECT a.*,t.marks_per_question AS marks,t.has_negative_marking AS negativeEnabled,t.negative_marks_per_question AS negative,q.id AS questionId,q.correct_answer AS correctAnswer,aa.selected_answer AS selectedAnswer FROM test_attempts a JOIN tests t ON t.id=a.test_id JOIN questions q ON q.test_id=t.id LEFT JOIN test_attempt_answers aa ON aa.attempt_id=a.id AND aa.question_id=q.id WHERE a.id=? AND a.student_id=? AND a.status='Draft'`, [request.params.attemptId, request.student.id]);
+        const [rows] = await db.execute(`SELECT a.*,t.duration_minutes AS durationMinutes,t.marks_per_question AS marks,t.has_negative_marking AS negativeEnabled,t.negative_marks_per_question AS negative,q.id AS questionId,q.correct_answer AS correctAnswer,aa.selected_answer AS selectedAnswer,aa.time_spent_seconds AS timeSpentSeconds FROM test_attempts a JOIN tests t ON t.id=a.test_id JOIN questions q ON q.test_id=t.id LEFT JOIN test_attempt_answers aa ON aa.attempt_id=a.id AND aa.question_id=q.id WHERE a.id=? AND a.student_id=? AND a.status='Draft'`, [request.params.attemptId, request.student.id]);
         if (!rows.length)
             return void response.status(404).json({ message: 'Draft attempt not found.' });
         let correct = 0, incorrect = 0, unanswered = 0;
@@ -300,8 +309,7 @@ app.post('/api/student/attempts/:attemptId/submit', async (request, response, ne
             else
                 incorrect++;
         }
-        const positive = correct * Number(rows[0].marks), negative = rows[0].negativeEnabled ? incorrect * Number(rows[0].negative) : 0, score = positive - negative, total = rows.length;
-        const startedAt = new Date(rows[0].started_at).getTime(), expiresAt = new Date(rows[0].expires_at).getTime(), time = Math.max(0, Math.min(expiresAt - startedAt, Date.now() - startedAt) / 1000);
+        const positive = correct * Number(rows[0].marks), negative = rows[0].negativeEnabled ? incorrect * Number(rows[0].negative) : 0, score = positive - negative, total = rows.length, testDurationSeconds = Number(rows[0].durationMinutes) * 60, activeSeconds = rows.reduce((sum, row) => sum + Math.max(0, Number(row.timeSpentSeconds ?? 0)), 0), timeTakenSeconds = Math.min(Math.max(0, activeSeconds), testDurationSeconds || activeSeconds);
         await db.execute("UPDATE test_attempts SET status='Completed',submitted_at=NOW(),score=?,correct_count=?,incorrect_count=?,unanswered_count=?,positive_marks=?,negative_marks=?,accuracy=?,percentage=?,time_taken_seconds=? WHERE id=?", [
             score,
             correct,
@@ -311,7 +319,7 @@ app.post('/api/student/attempts/:attemptId/submit', async (request, response, ne
             negative,
             total ? (correct / total) * 100 : 0,
             total ? (score / (total * Number(rows[0].marks))) * 100 : 0,
-            Math.floor(time),
+            Math.floor(timeTakenSeconds),
             request.params.attemptId,
         ]);
         response.json({
@@ -323,7 +331,7 @@ app.post('/api/student/attempts/:attemptId/submit', async (request, response, ne
             negativeMarks: negative,
             accuracy: total ? (correct / total) * 100 : 0,
             percentage: total ? (score / (total * Number(rows[0].marks))) * 100 : 0,
-            timeTakenSeconds: Math.floor(time),
+            timeTakenSeconds: Math.floor(timeTakenSeconds),
         });
     }
     catch (error) {
