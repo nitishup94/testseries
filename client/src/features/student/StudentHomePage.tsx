@@ -18,6 +18,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock3,
+  Download,
   GraduationCap,
   LogOut,
   Play,
@@ -662,7 +663,7 @@ function Brand(): React.JSX.Element {
         <GraduationCap size={23} />
       </div>
       <div>
-        <p className="text-lg font-bold tracking-tight">ExamDesk</p>
+        <p className="text-lg font-bold tracking-tight">ExamOcean</p>
         <p className="text-xs text-slate-500">Test Series Platform</p>
       </div>
     </div>
@@ -1145,6 +1146,19 @@ function ResultView({
               Accuracy: {Number(attempt.accuracy).toFixed(1)}% · Percentage:{' '}
               {Number(attempt.percentage).toFixed(1)}%
             </p>
+            {attempt.solutionPdfPath && (
+              <div className="mt-4 flex justify-end">
+                <a
+                  href={attempt.solutionPdfPath}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="button button-primary inline-flex items-center gap-2"
+                >
+                  <Download size={16} />
+                  Download solution PDF
+                </a>
+              </div>
+            )}
           </div>
         </section>
         <section className="mt-6">

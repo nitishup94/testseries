@@ -33,7 +33,7 @@ export function AdminLoginPage({
             <ShieldCheck size={28} />
           </div>
           <p className="mt-16 text-sm font-bold tracking-[0.18em] text-indigo-200">
-            EXAMDESK ADMIN
+            ExamOcean ADMIN
           </p>
           <h1 className="mt-3 text-4xl font-bold leading-tight">
             Build better assessments, with confidence.
@@ -44,7 +44,7 @@ export function AdminLoginPage({
             <div className="grid size-11 place-items-center rounded-xl bg-indigo-600 text-white">
               <ShieldCheck size={23} />
             </div>
-            <p className="mt-5 text-sm font-bold text-indigo-600">EXAMDESK ADMIN</p>
+            <p className="mt-5 text-sm font-bold text-indigo-600">ExamOcean ADMIN</p>
           </div>
           <h2 className="mt-8 text-2xl font-bold tracking-tight text-slate-900">
             Sign in to continue

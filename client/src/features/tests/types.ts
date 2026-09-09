@@ -20,6 +20,7 @@ export interface TestDraft {
   marksPerQuestion: string;
   hasNegativeMarking: boolean;
   negativeMarksPerQuestion: string;
+  solutionPdfPath: string | null;
   questions: Question[];
 }
 export interface TestSummary {
@@ -61,5 +62,6 @@ export const blankDraft = (): TestDraft => ({
   marksPerQuestion: '',
   hasNegativeMarking: false,
   negativeMarksPerQuestion: '',
+  solutionPdfPath: null,
   questions: [],
 });

@@ -49,6 +49,7 @@ interface TestInput {
   marksPerQuestion: number;
   hasNegativeMarking: boolean;
   negativeMarksPerQuestion: number | null;
+  solutionPdfPath: string | null;
   questions: QuestionInput[];
 }
 
@@ -61,6 +62,15 @@ const upload = multer({
   storage,
   limits: { files: 200, fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => cb(null, file.mimetype.startsWith('image/')),
+});
+const solutionUpload = multer({
+  storage,
+  limits: { files: 1, fileSize: 20 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) =>
+    cb(
+      null,
+      file.mimetype === 'application/pdf' || file.originalname.toLowerCase().endsWith('.pdf'),
+    ),
 });
 const app = express();
 app.use(cors());
@@ -321,7 +331,7 @@ app.post('/api/student/tests/:testId/start', async (request: StudentRequest, res
 app.get('/api/student/attempts/:attemptId', async (request: StudentRequest, response, next) => {
   try {
     const [attempts] = await db.execute<RowDataPacket[]>(
-      `SELECT a.*,t.name,t.course,t.duration_minutes AS durationMinutes,t.available_to AS availableTo,t.option_format AS optionFormat,t.marks_per_question AS marksPerQuestion,t.has_negative_marking AS hasNegativeMarking,t.negative_marks_per_question AS negativeMarksPerQuestion FROM test_attempts a JOIN tests t ON t.id=a.test_id WHERE a.id=? AND a.student_id=?`,
+      `SELECT a.*,t.name,t.course,t.duration_minutes AS durationMinutes,t.available_to AS availableTo,t.option_format AS optionFormat,t.marks_per_question AS marksPerQuestion,t.has_negative_marking AS hasNegativeMarking,t.negative_marks_per_question AS negativeMarksPerQuestion,t.solution_pdf_path AS solutionPdfPath FROM test_attempts a JOIN tests t ON t.id=a.test_id WHERE a.id=? AND a.student_id=?`,
       [request.params.attemptId, request.student!.id],
     );
     const attempt = attempts[0];
@@ -542,6 +552,8 @@ function readTest(body: unknown): TestInput | null {
     return null;
   const hasNegativeMarking = Boolean(value.hasNegativeMarking);
   const negativeMarks = hasNegativeMarking ? Number(value.negativeMarksPerQuestion) : null;
+  const solutionPdfPath =
+    typeof value.solutionPdfPath === 'string' ? value.solutionPdfPath.trim() || null : null;
   if (hasNegativeMarking && (!Number.isFinite(negativeMarks) || negativeMarks! < 0)) return null;
   return {
     course: value.course,
@@ -553,6 +565,7 @@ function readTest(body: unknown): TestInput | null {
     marksPerQuestion,
     hasNegativeMarking,
     negativeMarksPerQuestion: negativeMarks,
+    solutionPdfPath,
     questions,
   };
 }
@@ -572,16 +585,17 @@ async function saveTest(input: TestInput, id?: number): Promise<number> {
       input.marksPerQuestion,
       input.hasNegativeMarking,
       input.negativeMarksPerQuestion,
+      input.solutionPdfPath,
     ];
     if (testId) {
       await connection.execute(
-        "UPDATE tests SET course=?, name=?, option_format=?, duration_minutes=?, available_from=?, available_to=?, marks_per_question=?, has_negative_marking=?, negative_marks_per_question=?, status='Published' WHERE id=?",
+        "UPDATE tests SET course=?, name=?, option_format=?, duration_minutes=?, available_from=?, available_to=?, marks_per_question=?, has_negative_marking=?, negative_marks_per_question=?, solution_pdf_path=?, status='Published' WHERE id=?",
         [...values, testId],
       );
       await connection.execute('DELETE FROM questions WHERE test_id=?', [testId]);
     } else {
       const [result] = await connection.execute<ResultSetHeader>(
-        "INSERT INTO tests (course,name,option_format,duration_minutes,available_from,available_to,marks_per_question,has_negative_marking,negative_marks_per_question,status) VALUES (?,?,?,?,?,?,?,?,?,'Published')",
+        "INSERT INTO tests (course,name,option_format,duration_minutes,available_from,available_to,marks_per_question,has_negative_marking,negative_marks_per_question,solution_pdf_path,status) VALUES (?,?,?,?,?,?,?,?,?,?,'Published')",
         values,
       );
       testId = result.insertId;
@@ -636,6 +650,19 @@ app.post(
         .status(400)
         .json({ message: 'Each filename needs a unique positive number, for example crop-1.png.' });
     response.status(201).json(uploaded.sort((a, b) => a!.questionNumber - b!.questionNumber));
+  },
+);
+app.post(
+  '/api/uploads/solution',
+  solutionUpload.single('solution'),
+  (request: Request, response: Response) => {
+    const file = request.file as Express.Multer.File | undefined;
+    if (!file) return response.status(400).json({ message: 'Upload a PDF solution file.' });
+
+    response.status(201).json({
+      filename: file.originalname,
+      solutionPdfPath: resolveUploadUrl(file.filename),
+    });
   },
 );
 
@@ -756,7 +783,7 @@ app.get('/api/tests/:id/attempts', async (request, response, next) => {
 });
 app.get('/api/tests/:id', async (request, response) => {
   const [tests] = await db.execute(
-    'SELECT id, course, name, option_format AS optionFormat, duration_minutes AS durationMinutes, available_from AS availableFrom, available_to AS availableTo, marks_per_question AS marksPerQuestion, has_negative_marking AS hasNegativeMarking, negative_marks_per_question AS negativeMarksPerQuestion, status FROM tests WHERE id=?',
+    'SELECT id, course, name, option_format AS optionFormat, duration_minutes AS durationMinutes, available_from AS availableFrom, available_to AS availableTo, marks_per_question AS marksPerQuestion, has_negative_marking AS hasNegativeMarking, negative_marks_per_question AS negativeMarksPerQuestion, solution_pdf_path AS solutionPdfPath, status FROM tests WHERE id=?',
     [request.params.id],
   );
   if (!Array.isArray(tests) || !tests.length)
@@ -803,6 +830,10 @@ app.delete('/api/tests/:id', async (request, response, next) => {
         'SELECT image_path AS imagePath FROM questions WHERE test_id=?',
         [testId],
       );
+      const [solutionRows] = await connection.execute<RowDataPacket[]>(
+        'SELECT solution_pdf_path AS solutionPdfPath FROM tests WHERE id=?',
+        [testId],
+      );
 
       await connection.execute('DELETE FROM tests WHERE id=?', [testId]);
 
@@ -819,6 +850,22 @@ app.delete('/api/tests/:id', async (request, response, next) => {
           await fs.unlink(filePath);
         } catch {
           // Ignore missing file or already removed files.
+        }
+      }
+
+      const solutionPdfPath = String(solutionRows[0]?.solutionPdfPath ?? '').trim();
+      if (solutionPdfPath) {
+        const pathname = solutionPdfPath.startsWith('http')
+          ? new URL(solutionPdfPath).pathname
+          : solutionPdfPath;
+        const filename = path.basename(decodeURIComponent(pathname));
+        if (filename) {
+          const filePath = path.join(uploadDirectory, filename);
+          try {
+            await fs.unlink(filePath);
+          } catch {
+            // Ignore missing file or already removed files.
+          }
         }
       }
 

@@ -48,6 +48,8 @@ export function AdminTestsPage({
   const [tests, setTests] = useState<TestSummary[]>([]);
   const [draft, setDraft] = useState<TestDraft>(blankDraft);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [pendingSolutionFile, setPendingSolutionFile] = useState<File | null>(null);
+  const [uploadingSolution, setUploadingSolution] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -75,6 +77,8 @@ export function AdminTestsPage({
   const beginNew = (): void => {
     setDraft(blankDraft());
     setPendingFiles([]);
+    setPendingSolutionFile(null);
+    setUploadingSolution(false);
     setNotice(null);
     setQuestionErrors([]);
     setScreen('form');
@@ -92,10 +96,12 @@ export function AdminTestsPage({
         marksPerQuestion: String(data.marksPerQuestion),
         negativeMarksPerQuestion:
           data.negativeMarksPerQuestion === null ? '' : String(data.negativeMarksPerQuestion),
+        solutionPdfPath: data.solutionPdfPath ?? null,
         availableFrom: data.availableFrom.slice(0, 16),
         availableTo: data.availableTo.slice(0, 16),
       });
       setPendingFiles([]);
+      setPendingSolutionFile(null);
       setQuestionErrors([]);
       setScreen('form');
     } catch (error) {
@@ -150,9 +156,41 @@ export function AdminTestsPage({
     setPendingFiles((current) => [...current, ...images]);
     setNotice(null);
   };
+  const acceptSolutionFile = (file: File | null): void => {
+    if (!file) return;
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    if (!isPdf) {
+      setNotice({ type: 'error', text: 'Choose a PDF file for the solution.' });
+      return;
+    }
+    setPendingSolutionFile(file);
+    setNotice(null);
+  };
   const onDrop = (event: DragEvent<HTMLDivElement>): void => {
     event.preventDefault();
     acceptFiles(Array.from(event.dataTransfer.files));
+  };
+  const onSolutionDrop = (event: DragEvent<HTMLDivElement>): void => {
+    event.preventDefault();
+    acceptSolutionFile(Array.from(event.dataTransfer.files)[0] ?? null);
+  };
+  const uploadSolution = async (file: File | null): Promise<void> => {
+    if (!file) return;
+    setUploadingSolution(true);
+    setNotice(null);
+    try {
+      const { solutionPdfPath } = await testApi.uploadSolution(file);
+      setDraft((current) => ({ ...current, solutionPdfPath }));
+      setPendingSolutionFile(null);
+      setNotice({ type: 'success', text: 'Solution PDF uploaded successfully.' });
+    } catch (error) {
+      setNotice({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Solution upload failed.',
+      });
+    } finally {
+      setUploadingSolution(false);
+    }
   };
   const proceed = async (): Promise<void> => {
     if (!pendingFiles.length) {
@@ -253,7 +291,7 @@ export function AdminTestsPage({
               <ClipboardList size={22} />
             </div>
             <div>
-              <p className="text-lg font-bold tracking-tight">ExamDesk</p>
+              <p className="text-lg font-bold tracking-tight">ExamOcean</p>
               <p className="text-xs text-slate-500">Admin workspace</p>
             </div>
           </div>
@@ -310,6 +348,12 @@ export function AdminTestsPage({
             onRemovePending={(index) =>
               setPendingFiles((current) => current.filter((_, i) => i !== index))
             }
+            pendingSolutionFile={pendingSolutionFile}
+            uploadingSolution={uploadingSolution}
+            onSolutionDrop={onSolutionDrop}
+            onSolutionFiles={(event) => acceptSolutionFile(event.target.files?.[0] ?? null)}
+            onUploadSolution={() => void uploadSolution(pendingSolutionFile)}
+            onRemoveSolution={() => setDraft((current) => ({ ...current, solutionPdfPath: null }))}
             onProceed={() => void proceed()}
             onSelectAnswer={selectAnswer}
             onRemoveQuestion={removeQuestion}
@@ -567,6 +611,12 @@ function TestForm(props: {
   onDrop: (event: DragEvent<HTMLDivElement>) => void;
   onFiles: (event: ChangeEvent<HTMLInputElement>) => void;
   onRemovePending: (index: number) => void;
+  pendingSolutionFile: File | null;
+  uploadingSolution: boolean;
+  onSolutionDrop: (event: DragEvent<HTMLDivElement>) => void;
+  onSolutionFiles: (event: ChangeEvent<HTMLInputElement>) => void;
+  onUploadSolution: () => void;
+  onRemoveSolution: () => void;
   onProceed: () => void;
   onSelectAnswer: (number: number, answer: Answer) => void;
   onRemoveQuestion: (number: number) => void;
@@ -583,6 +633,12 @@ function TestForm(props: {
     onDrop,
     onFiles,
     onRemovePending,
+    pendingSolutionFile,
+    uploadingSolution,
+    onSolutionDrop,
+    onSolutionFiles,
+    onUploadSolution,
+    onRemoveSolution,
     onProceed,
     onSelectAnswer,
     onRemoveQuestion,
@@ -738,7 +794,71 @@ function TestForm(props: {
           <section className="card p-5 sm:p-7">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h2 className="text-lg font-bold">2. Question images</h2>
+                <h2 className="text-lg font-bold">2. Solution PDF</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Add an answer key PDF that students can download after the test ends.
+                </p>
+              </div>
+              {draft.solutionPdfPath && (
+                <a
+                  href={draft.solutionPdfPath}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700"
+                >
+                  Attached
+                </a>
+              )}
+            </div>
+            <div
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={onSolutionDrop}
+              onClick={() => document.getElementById('solution-pdf-input')?.click()}
+              className="mt-5 grid min-h-32 cursor-pointer place-items-center rounded-xl border-2 border-dashed border-violet-200 bg-violet-50/50 p-5 text-center transition hover:border-violet-400 hover:bg-violet-50"
+            >
+              <div>
+                <UploadCloud className="mx-auto mb-3 text-violet-600" size={26} />
+                <p className="font-semibold">Drop solution PDF here</p>
+                <p className="mt-1 text-sm text-slate-500">or click to browse · PDF only</p>
+              </div>
+              <input
+                id="solution-pdf-input"
+                className="sr-only"
+                type="file"
+                accept="application/pdf"
+                onChange={onSolutionFiles}
+              />
+            </div>
+            {(pendingSolutionFile || draft.solutionPdfPath) && (
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center rounded-md bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-700">
+                  {pendingSolutionFile ? pendingSolutionFile.name : 'Current solution PDF'}
+                </span>
+                {pendingSolutionFile ? (
+                  <button
+                    type="button"
+                    onClick={() => onUploadSolution()}
+                    className="button button-secondary min-h-9 px-3 text-xs"
+                    disabled={uploadingSolution}
+                  >
+                    {uploadingSolution ? 'Uploading…' : 'Save solution'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onRemoveSolution}
+                    className="button border border-rose-200 bg-rose-50 px-3 text-xs text-rose-700 hover:bg-rose-100"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            )}
+          </section>
+          <section className="card p-5 sm:p-7">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold">3. Question images</h2>
                 <p className="mt-1 text-sm text-slate-500">
                   Use names such as <code>crop-1.png</code>. Numbers determine question order.
                 </p>

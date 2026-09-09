@@ -48,6 +48,11 @@ export const testApi = {
     files.forEach((file) => form.append('images', file));
     return request('/api/uploads/questions', { method: 'POST', body: form });
   },
+  uploadSolution: (file: File): Promise<{ filename: string; solutionPdfPath: string }> => {
+    const form = new FormData();
+    form.append('solution', file);
+    return request('/api/uploads/solution', { method: 'POST', body: form });
+  },
   save: (draft: TestDraft): Promise<{ id: number; status: string }> => {
     const { id, ...body } = draft;
     return request(id ? `/api/tests/${id}` : '/api/tests', {
@@ -60,6 +65,7 @@ export const testApi = {
         negativeMarksPerQuestion: body.hasNegativeMarking
           ? Number(body.negativeMarksPerQuestion)
           : null,
+        solutionPdfPath: body.solutionPdfPath ?? null,
         questions: body.questions.map((question) => ({
           questionNumber: question.questionNumber,
           imagePath: question.imagePath,

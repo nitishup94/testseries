@@ -20,6 +20,7 @@ CREATE TABLE tests (
   marks_per_question DECIMAL(6,2) NOT NULL,
   has_negative_marking BOOLEAN NOT NULL DEFAULT FALSE,
   negative_marks_per_question DECIMAL(6,2) NULL,
+  solution_pdf_path VARCHAR(255) NULL,
   status ENUM('Published', 'Draft') NOT NULL DEFAULT 'Published',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP

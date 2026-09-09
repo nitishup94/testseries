@@ -75,6 +75,7 @@ export async function initializeDatabase(): Promise<void> {
         marks_per_question DECIMAL(6,2) NOT NULL,
         has_negative_marking BOOLEAN NOT NULL DEFAULT FALSE,
         negative_marks_per_question DECIMAL(6,2) NULL,
+        solution_pdf_path VARCHAR(255) NULL,
         status ENUM('Published', 'Draft') NOT NULL DEFAULT 'Published',
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -88,6 +89,16 @@ export async function initializeDatabase(): Promise<void> {
     if (!optionFormatColumns.length) {
       await connection.query(
         "ALTER TABLE tests ADD COLUMN option_format ENUM('Alphabetic', 'Numeric', 'Roman') NOT NULL DEFAULT 'Alphabetic' AFTER name",
+      );
+    }
+    const [solutionPdfColumns] = await connection.query<RowDataPacket[]>(
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'tests' AND COLUMN_NAME = 'solution_pdf_path'`,
+      [databaseName],
+    );
+    if (!solutionPdfColumns.length) {
+      await connection.query(
+        'ALTER TABLE tests ADD COLUMN solution_pdf_path VARCHAR(255) NULL AFTER negative_marks_per_question',
       );
     }
     await connection.query(`

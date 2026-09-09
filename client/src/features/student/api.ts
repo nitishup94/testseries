@@ -86,6 +86,7 @@ export interface Attempt {
   marksPerQuestion: number;
   hasNegativeMarking: boolean | number;
   negativeMarksPerQuestion: number | null;
+  solutionPdfPath?: string | null;
   score?: number;
   correct_count?: number;
   incorrect_count?: number;

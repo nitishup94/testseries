@@ -37,7 +37,7 @@ export function AdminHomePage({
               <ClipboardList size={22} />
             </div>
             <div>
-              <p className="text-lg font-bold tracking-tight">ExamDesk</p>
+              <p className="text-lg font-bold tracking-tight">ExamOcean</p>
               <p className="text-xs text-slate-500">Test Series Platform</p>
             </div>
           </div>
