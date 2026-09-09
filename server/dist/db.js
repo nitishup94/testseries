@@ -6,6 +6,7 @@ const connectionConfig = {
     port: Number(process.env.DB_PORT ?? 3306),
     user: process.env.DB_USER ?? 'root',
     password: process.env.DB_PASSWORD ?? '',
+    timezone: process.env.DB_TIMEZONE ?? '+05:30',
 };
 const databaseName = process.env.DB_NAME ?? 'testseries';
 const studyPlannerDatabaseName = process.env.STUDYPLANNER_DB_NAME ?? 'studyplanner';
@@ -31,6 +32,7 @@ export const studyPlannerDb = mysql.createPool({
 export async function initializeDatabase() {
     const connection = await mysql.createConnection(connectionConfig);
     try {
+        await connection.query('SET time_zone = "+05:30"');
         await connection.query(`CREATE DATABASE IF NOT EXISTS \`${databaseName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
         await connection.query(`USE \`${databaseName}\``);
         await connection.query(`

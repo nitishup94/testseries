@@ -33,8 +33,64 @@ const optionLabels = {
   Numeric: ['1', '2', '3', '4'],
   Roman: ['I', 'II', 'III', 'IV'],
 } as const;
-const localDate = (date: string) =>
-  date ? new Date(date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+const toIstDate = (value: string): Date | null => {
+  if (!value) return null;
+  const raw = value.trim();
+  if (!raw) return null;
+
+  try {
+    const asIso = raw.includes(' ') ? raw.replace(' ', 'T') : raw;
+    const parsed = new Date(asIso);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  } catch {
+    // fall through to explicit IST parsing for empty-timezone values
+  }
+
+  const match = raw.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/,
+  );
+  if (!match) return null;
+
+  const [, year, month, day, hour, minute] = match;
+  const utcMs = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+  );
+  return new Date(utcMs - 5.5 * 60 * 60 * 1000);
+};
+
+const formatIstInput = (value: string): string => {
+  const date = toIstDate(value);
+  if (!date) return '';
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const map = Object.fromEntries(
+    parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]),
+  );
+  return `${map.year}-${map.month}-${map.day}T${map.hour}:${map.minute}`;
+};
+
+const localDate = (date: string) => {
+  const value = toIstDate(date);
+  return value
+    ? new Intl.DateTimeFormat(undefined, {
+        timeZone: 'Asia/Kolkata',
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(value)
+    : '—';
+};
 const formatDuration = (seconds: number): string => `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 
 export function AdminTestsPage({
@@ -97,8 +153,8 @@ export function AdminTestsPage({
         negativeMarksPerQuestion:
           data.negativeMarksPerQuestion === null ? '' : String(data.negativeMarksPerQuestion),
         solutionPdfPath: data.solutionPdfPath ?? null,
-        availableFrom: data.availableFrom.slice(0, 16),
-        availableTo: data.availableTo.slice(0, 16),
+        availableFrom: formatIstInput(data.availableFrom),
+        availableTo: formatIstInput(data.availableTo),
       });
       setPendingFiles([]);
       setPendingSolutionFile(null);
