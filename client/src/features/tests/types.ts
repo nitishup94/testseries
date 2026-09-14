@@ -5,8 +5,13 @@ export const optionFormats = ['Alphabetic', 'Numeric', 'Roman'] as const;
 export type OptionFormat = (typeof optionFormats)[number];
 export interface Question {
   questionNumber: number;
-  imagePath: string;
+  imagePath?: string | null;
   filename?: string;
+  questionText?: string | null;
+  optionA?: string;
+  optionB?: string;
+  optionC?: string;
+  optionD?: string;
   correctAnswer: Answer | '';
 }
 export interface TestDraft {

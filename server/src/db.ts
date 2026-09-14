@@ -108,7 +108,8 @@ export async function initializeDatabase(): Promise<void> {
         id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         test_id INT UNSIGNED NOT NULL,
         question_number SMALLINT UNSIGNED NOT NULL,
-        image_path VARCHAR(255) NOT NULL,
+        question_text TEXT NULL,
+        image_path VARCHAR(255) NULL,
         option_a TEXT NOT NULL,
         option_b TEXT NOT NULL,
         option_c TEXT NOT NULL,
@@ -118,6 +119,24 @@ export async function initializeDatabase(): Promise<void> {
         CONSTRAINT uq_test_question_number UNIQUE (test_id, question_number)
       )
     `);
+    const [questionTextColumns] = await connection.query<RowDataPacket[]>(
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'questions' AND COLUMN_NAME = 'question_text'`,
+      [databaseName],
+    );
+    if (!questionTextColumns.length) {
+      await connection.query(
+        'ALTER TABLE questions ADD COLUMN question_text TEXT NULL AFTER question_number',
+      );
+    }
+    const [imagePathColumns] = await connection.query<RowDataPacket[]>(
+      `SELECT IS_NULLABLE FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'questions' AND COLUMN_NAME = 'image_path'`,
+      [databaseName],
+    );
+    if (imagePathColumns[0] && imagePathColumns[0].IS_NULLABLE === 'NO') {
+      await connection.query('ALTER TABLE questions MODIFY COLUMN image_path VARCHAR(255) NULL');
+    }
     await connection.query(`CREATE TABLE IF NOT EXISTS test_attempts (
       id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, test_id INT UNSIGNED NOT NULL, student_id INT UNSIGNED NOT NULL,
       status ENUM('Draft','Completed') NOT NULL DEFAULT 'Draft', started_at DATETIME NOT NULL, submitted_at DATETIME NULL,

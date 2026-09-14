@@ -93,6 +93,127 @@ const localDate = (date: string) => {
 };
 const formatDuration = (seconds: number): string => `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 
+const parseCsvLine = (line: string): string[] => {
+  const cells: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"') {
+      if (inQuotes && line[index + 1] === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === ',' && !inQuotes) {
+      cells.push(current);
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  cells.push(current);
+  return cells.map((cell) => cell.trim());
+};
+
+const normalizeCsvHeader = (value: string): string =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+const parseCsvQuestions = (
+  csvText: string,
+): Array<{
+  questionText: string;
+  optionA: string;
+  optionB: string;
+  optionC: string;
+  optionD: string;
+  correctAnswer: Answer;
+}> => {
+  const rows = csvText
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (!rows.length) throw new Error('CSV file is empty.');
+
+  const parsedRows = rows.map(parseCsvLine);
+  const firstRow = parsedRows[0].map(normalizeCsvHeader);
+  const hasHeader = firstRow.some((cell) =>
+    [
+      'question',
+      'questiontext',
+      'prompt',
+      'optiona',
+      'optionb',
+      'optionc',
+      'optiond',
+      'correctanswer',
+      'answer',
+    ].includes(cell),
+  );
+
+  const recordRows = hasHeader ? parsedRows.slice(1) : parsedRows;
+  if (!recordRows.length) throw new Error('CSV must include at least one question row.');
+
+  const headers = hasHeader
+    ? firstRow
+    : ['questiontext', 'optiona', 'optionb', 'optionc', 'optiond', 'correctanswer'];
+  const getColumn = (aliases: string[]): number => {
+    const found = headers.findIndex((header) =>
+      aliases.some((alias) => header === alias || header.includes(alias) || alias.includes(header)),
+    );
+    return found >= 0 ? found : -1;
+  };
+
+  const questionIndex = getColumn(['questiontext', 'question', 'prompt']);
+  const optionAIndex = getColumn(['optiona', 'a']);
+  const optionBIndex = getColumn(['optionb', 'b']);
+  const optionCIndex = getColumn(['optionc', 'c']);
+  const optionDIndex = getColumn(['optiond', 'd']);
+  const answerIndex = getColumn(['correctanswer', 'answer', 'correct']);
+
+  return recordRows.map((row, index) => {
+    const questionText = (row[questionIndex] ?? row[0] ?? '').trim();
+    const optionA = (row[optionAIndex] ?? row[1] ?? '').trim();
+    const optionB = (row[optionBIndex] ?? row[2] ?? '').trim();
+    const optionC = (row[optionCIndex] ?? row[3] ?? '').trim();
+    const optionD = (row[optionDIndex] ?? row[4] ?? '').trim();
+    const correctAnswerRaw = (row[answerIndex] ?? row[5] ?? '').trim();
+
+    if (!questionText) throw new Error(`Question ${index + 1} is missing text.`);
+    if (!optionA || !optionB || !optionC || !optionD)
+      throw new Error(`Question ${index + 1} must include all four options.`);
+
+    const correctAnswer = correctAnswerRaw.toUpperCase();
+    if (!['A', 'B', 'C', 'D'].includes(correctAnswer)) {
+      throw new Error(
+        `Question ${index + 1} has an invalid correct answer: ${correctAnswerRaw || 'empty'}.`,
+      );
+    }
+
+    return {
+      questionText,
+      optionA,
+      optionB,
+      optionC,
+      optionD,
+      correctAnswer: correctAnswer as Answer,
+    };
+  });
+};
+
 export function AdminTestsPage({
   onHome,
   onLogout,
@@ -114,6 +235,7 @@ export function AdminTestsPage({
   const [attempts, setAttempts] = useState<TestAttemptSummary[]>([]);
   const [attemptsLoading, setAttemptsLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const csvInputRef = useRef<HTMLInputElement>(null);
   const loadTests = async (): Promise<void> => {
     setLoading(true);
     try {
@@ -267,6 +389,11 @@ export function AdminTestsPage({
           ...current.questions,
           ...uploaded.map((item) => ({
             ...item,
+            questionText: '',
+            optionA: '',
+            optionB: '',
+            optionC: '',
+            optionD: '',
             correctAnswer: '' as const,
           })),
         ].sort((a, b) => a.questionNumber - b.questionNumber),
@@ -288,6 +415,73 @@ export function AdminTestsPage({
         q.questionNumber === number ? { ...q, ...patch } : q,
       ),
     }));
+  const addTextQuestion = (): void => {
+    const nextNumber =
+      draft.questions.length > 0
+        ? Math.max(...draft.questions.map((question) => question.questionNumber)) + 1
+        : 1;
+    setDraft((current) => ({
+      ...current,
+      questions: [
+        ...current.questions,
+        {
+          questionNumber: nextNumber,
+          imagePath: '',
+          questionText: '',
+          optionA: '',
+          optionB: '',
+          optionC: '',
+          optionD: '',
+          correctAnswer: '' as const,
+        },
+      ].sort((a, b) => a.questionNumber - b.questionNumber),
+    }));
+  };
+  const importCsvQuestions = async (file: File | null): Promise<void> => {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      setNotice({ type: 'error', text: 'Choose a CSV file.' });
+      return;
+    }
+
+    try {
+      const csvText = await file.text();
+      const parsed = parseCsvQuestions(csvText);
+      if (!parsed.length) {
+        throw new Error('The CSV does not contain any valid questions.');
+      }
+
+      const nextNumber =
+        draft.questions.length > 0
+          ? Math.max(...draft.questions.map((question) => question.questionNumber)) + 1
+          : 1;
+
+      setDraft((current) => ({
+        ...current,
+        questions: [
+          ...current.questions,
+          ...parsed.map((item, index) => ({
+            questionNumber: nextNumber + index,
+            imagePath: '',
+            questionText: item.questionText,
+            optionA: item.optionA,
+            optionB: item.optionB,
+            optionC: item.optionC,
+            optionD: item.optionD,
+            correctAnswer: item.correctAnswer,
+          })),
+        ].sort((a, b) => a.questionNumber - b.questionNumber),
+      }));
+      setNotice({ type: 'success', text: `${parsed.length} question(s) imported from CSV.` });
+    } catch (error) {
+      setNotice({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'CSV import failed.',
+      });
+    } finally {
+      if (csvInputRef.current) csvInputRef.current.value = '';
+    }
+  };
   const removeQuestion = (number: number): void =>
     setDraft((current) => ({
       ...current,
@@ -305,20 +499,37 @@ export function AdminTestsPage({
       draft.availableTo &&
       draft.marksPerQuestion &&
       draft.questions.length &&
-      draft.questions.every((q) => q.correctAnswer) &&
+      draft.questions.every((q) => {
+        const hasTextQuestion = Boolean(q.questionText?.trim());
+        const hasImageQuestion = Boolean(q.imagePath?.trim());
+        const hasTextOptions =
+          q.optionA?.trim() && q.optionB?.trim() && q.optionC?.trim() && q.optionD?.trim();
+
+        return (
+          q.correctAnswer &&
+          (hasImageQuestion || hasTextQuestion) &&
+          (!hasTextQuestion || hasTextOptions) &&
+          (!hasImageQuestion || true)
+        );
+      }) &&
       (!draft.hasNegativeMarking || draft.negativeMarksPerQuestion),
   );
   const submit = async (): Promise<void> => {
     const unansweredQuestions = draft.questions
       .filter((question) => !question.correctAnswer)
       .map((question) => question.questionNumber);
+    const unansweredImageQuestions = draft.questions
+      .filter((question) => !question.correctAnswer && Boolean(question.imagePath?.trim()))
+      .map((question) => question.questionNumber);
     setQuestionErrors(unansweredQuestions);
     if (!valid) {
       setNotice({
         type: 'error',
-        text: unansweredQuestions.length
-          ? 'Choose the correct answer for every question before publishing.'
-          : 'Complete all required test details before publishing.',
+        text: unansweredImageQuestions.length
+          ? 'Complete all required image question details and choose the correct answer for every question before publishing.'
+          : unansweredQuestions.length
+            ? 'Choose the correct answer for every question before publishing.'
+            : 'Complete all required test details before publishing.',
       });
       return;
     }
@@ -411,6 +622,9 @@ export function AdminTestsPage({
             onUploadSolution={() => void uploadSolution(pendingSolutionFile)}
             onRemoveSolution={() => setDraft((current) => ({ ...current, solutionPdfPath: null }))}
             onProceed={() => void proceed()}
+            onUpdateQuestion={updateQuestion}
+            onAddTextQuestion={addTextQuestion}
+            onImportCsv={(file) => void importCsvQuestions(file)}
             onSelectAnswer={selectAnswer}
             onRemoveQuestion={removeQuestion}
             questionErrors={questionErrors}
@@ -674,6 +888,9 @@ function TestForm(props: {
   onUploadSolution: () => void;
   onRemoveSolution: () => void;
   onProceed: () => void;
+  onUpdateQuestion: (number: number, patch: Partial<Question>) => void;
+  onAddTextQuestion: () => void;
+  onImportCsv: (file: File | null) => void;
   onSelectAnswer: (number: number, answer: Answer) => void;
   onRemoveQuestion: (number: number) => void;
   questionErrors: number[];
@@ -696,6 +913,9 @@ function TestForm(props: {
     onUploadSolution,
     onRemoveSolution,
     onProceed,
+    onUpdateQuestion,
+    onAddTextQuestion,
+    onImportCsv,
     onSelectAnswer,
     onRemoveQuestion,
     questionErrors,
@@ -914,9 +1134,11 @@ function TestForm(props: {
           <section className="card p-5 sm:p-7">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h2 className="text-lg font-bold">3. Question images</h2>
+                <h2 className="text-lg font-bold">3. Question images or text</h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Use names such as <code>crop-1.png</code>. Numbers determine question order.
+                  Upload question images as before, or type the question text directly and add
+                  options. Use names such as <code>crop-1.png</code> if you are using image
+                  questions.
                 </p>
               </div>
               <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">
@@ -968,27 +1190,55 @@ function TestForm(props: {
                 </div>
               </div>
             )}
-            <button
-              onClick={onProceed}
-              disabled={saving || (!pendingFiles.length && !draft.questions.length)}
-              className="button button-secondary mt-5"
-            >
-              {saving ? (
-                <LoaderCircle className="animate-spin" size={17} />
-              ) : (
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button
+                onClick={onProceed}
+                disabled={saving || (!pendingFiles.length && !draft.questions.length)}
+                className="button button-secondary"
+              >
+                {saving ? (
+                  <LoaderCircle className="animate-spin" size={17} />
+                ) : (
+                  <UploadCloud size={17} />
+                )}
+                {pendingFiles.length ? 'Proceed & generate questions' : 'Questions generated'}
+              </button>
+              <button type="button" onClick={onAddTextQuestion} className="button button-secondary">
+                <Plus size={17} />
+                Add text question
+              </button>
+              <button
+                type="button"
+                onClick={() => document.getElementById('csv-question-input')?.click()}
+                className="button button-secondary"
+              >
                 <UploadCloud size={17} />
-              )}
-              {pendingFiles.length ? 'Proceed & generate questions' : 'Questions generated'}
-            </button>
+                Upload CSV
+              </button>
+            </div>
+            <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+              <p className="font-semibold text-slate-700">CSV format</p>
+              <p className="mt-1">questionText,optionA,optionB,optionC,optionD,correctAnswer</p>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Example: "What is 2+2?","3","4","5","6","B"
+              </p>
+              <input
+                id="csv-question-input"
+                className="sr-only"
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(event) => onImportCsv(event.target.files?.[0] ?? null)}
+              />
+            </div>
           </section>
           {draft.questions.length > 0 && (
             <section className="card p-5 sm:p-7">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-bold">3. Confirm correct answers</h2>
+                  <h2 className="text-lg font-bold">3. Confirm question details</h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    The answer options are already in your question images. Select one answer for
-                    each question.
+                    Each question can use either an image or typed text, and each option can be
+                    edited.
                   </p>
                 </div>
               </div>
@@ -1008,12 +1258,49 @@ function TestForm(props: {
                       </button>
                     </div>
                     <div className="grid gap-5">
-                      <img
-                        src={question.imagePath}
-                        alt={`Question ${question.questionNumber}`}
-                        loading="lazy"
-                        className="h-auto w-full rounded-lg border border-slate-200"
-                      />
+                      {question.imagePath ? (
+                        <img
+                          src={question.imagePath}
+                          alt={`Question ${question.questionNumber}`}
+                          loading="lazy"
+                          className="h-auto w-full rounded-lg border border-slate-200"
+                        />
+                      ) : (
+                        <>
+                          <label className="field">
+                            Question text
+                            <textarea
+                              value={question.questionText ?? ''}
+                              onChange={(e) =>
+                                onUpdateQuestion(question.questionNumber, {
+                                  questionText: e.target.value,
+                                })
+                              }
+                              className="input min-h-28 resize-y"
+                              placeholder="Type the question here..."
+                            />
+                          </label>
+                          <div className="grid gap-3">
+                            {(['A', 'B', 'C', 'D'] as const).map((letter, index) => (
+                              <label key={letter} className="field">
+                                Option {optionLabels[draft.optionFormat][index]}
+                                <input
+                                  value={String(
+                                    question[`option${letter}` as keyof Question] ?? '',
+                                  )}
+                                  onChange={(e) =>
+                                    onUpdateQuestion(question.questionNumber, {
+                                      [`option${letter}`]: e.target.value,
+                                    } as Partial<Question>)
+                                  }
+                                  className="input"
+                                  placeholder={`Option ${letter}`}
+                                />
+                              </label>
+                            ))}
+                          </div>
+                        </>
+                      )}
                       <fieldset className="field">
                         <legend>
                           Correct answer <span className="text-rose-600">*</span>

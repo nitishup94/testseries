@@ -68,7 +68,12 @@ export const testApi = {
         solutionPdfPath: body.solutionPdfPath ?? null,
         questions: body.questions.map((question) => ({
           questionNumber: question.questionNumber,
-          imagePath: question.imagePath,
+          imagePath: question.imagePath ?? '',
+          questionText: question.questionText ?? '',
+          optionA: question.optionA ?? '',
+          optionB: question.optionB ?? '',
+          optionC: question.optionC ?? '',
+          optionD: question.optionD ?? '',
           correctAnswer: question.correctAnswer,
         })),
       }),

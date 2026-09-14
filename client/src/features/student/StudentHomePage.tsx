@@ -367,6 +367,7 @@ export function StudentHomePage({ onAdminLogin }: { onAdminLogin: () => void }):
   const [loading, setLoading] = useState(Boolean(studentApi.session()));
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [coursePages, setCoursePages] = useState<Record<string, Record<string, number>>>({});
 
   const scrollToSection = (nextSection: StudentTestSection): void => {
     setSection(nextSection);
@@ -450,6 +451,25 @@ export function StudentHomePage({ onAdminLogin }: { onAdminLogin: () => void }):
   const tests = normalizedSearch
     ? allTests.filter((test) => test.name.toLowerCase().includes(normalizedSearch))
     : allTests;
+  const groupedTests = tests.reduce<Map<string, TestCard[]>>((accumulator, test) => {
+    const course = test.course || 'Others';
+    const next = accumulator.get(course) ?? [];
+    next.push(test);
+    accumulator.set(course, next);
+    return accumulator;
+  }, new Map());
+  const courseGroups = Array.from(groupedTests.entries());
+
+  const setCoursePage = (course: string, nextPage: number): void => {
+    setCoursePages((current) => ({
+      ...current,
+      [section]: {
+        ...(current[section] ?? {}),
+        [course]: nextPage,
+      },
+    }));
+  };
+
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
       <header className="border-b bg-white shadow-sm">
@@ -573,17 +593,66 @@ export function StudentHomePage({ onAdminLogin }: { onAdminLogin: () => void }):
           </div>
           {loading ? (
             <p className="mt-5 text-slate-500">Loading your tests…</p>
-          ) : tests.length ? (
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              {tests.map((test) => (
-                <TestCardView
-                  key={test.id}
-                  test={test}
-                  section={section}
-                  onStart={start}
-                  onOpen={open}
-                />
-              ))}
+          ) : courseGroups.length ? (
+            <div className="mt-4 space-y-6">
+              {courseGroups.map(([course, courseTests]) => {
+                const currentPage = coursePages[section]?.[course] ?? 1;
+                const pageSize = 10;
+                const totalPages = Math.max(1, Math.ceil(courseTests.length / pageSize));
+                const safePage = Math.min(Math.max(1, currentPage), totalPages);
+                const visibleTests = courseTests.slice(
+                  (safePage - 1) * pageSize,
+                  safePage * pageSize,
+                );
+
+                if (safePage !== currentPage) {
+                  setCoursePage(course, safePage);
+                }
+
+                return (
+                  <section key={`${section}-${course}`} className="space-y-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="inline-flex items-center rounded-full border border-indigo-200 bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 px-3.5 py-1.5 text-xs font-extrabold uppercase tracking-[0.18em] text-white shadow-sm shadow-indigo-200/60">
+                        {course}
+                      </span>
+                      {courseTests.length > 10 && (
+                        <div className="flex items-center gap-2 text-sm text-slate-600">
+                          <button
+                            type="button"
+                            className="button button-secondary min-h-8 px-2 py-1"
+                            disabled={safePage === 1}
+                            onClick={() => setCoursePage(course, safePage - 1)}
+                          >
+                            Prev
+                          </button>
+                          <span>
+                            Page {safePage} / {totalPages}
+                          </span>
+                          <button
+                            type="button"
+                            className="button button-secondary min-h-8 px-2 py-1"
+                            disabled={safePage === totalPages}
+                            onClick={() => setCoursePage(course, safePage + 1)}
+                          >
+                            Next
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      {visibleTests.map((test) => (
+                        <TestCardView
+                          key={test.id}
+                          test={test}
+                          section={section}
+                          onStart={start}
+                          onOpen={open}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
             </div>
           ) : (
             <div className="card mt-4 p-8 text-center text-slate-600">
@@ -992,31 +1061,46 @@ function TestRunner({
               {question.markedForReview ? 'Unmark review' : 'Mark for review'}
             </button>
           </div>
-          <div className="mt-5">
-            <QuestionImage
-              className="max-h-96 w-full"
-              src={question.imagePath}
-              alt={`Question ${question.questionNumber}`}
-            />
-          </div>
-          <fieldset className="mt-6 grid gap-3">
-            <legend className="sr-only">Select an answer</legend>
-            {answers.map((letter) => (
-              <label
-                key={letter}
-                className={`flex min-h-12 cursor-pointer items-center gap-3 rounded-lg border p-3 ${question.selectedAnswer === letter ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200'}`}
-              >
-                <input
-                  type="radio"
-                  name="answer"
-                  checked={question.selectedAnswer === letter}
-                  onChange={() => update((q) => ({ ...q, selectedAnswer: letter }))}
-                />
-                <span className="font-bold">{letter}.</span>
-                <span>{question[`option${letter}` as keyof AttemptQuestion] as string}</span>
-              </label>
-            ))}
-          </fieldset>
+          {question.imagePath ? (
+            <div className="mt-5">
+              <QuestionImage
+                className="max-h-96 w-full"
+                src={question.imagePath}
+                alt={`Question ${question.questionNumber}`}
+              />
+            </div>
+          ) : null}
+          {question.questionText && (
+            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4 text-base font-medium leading-7 text-slate-800">
+              {question.questionText}
+            </div>
+          )}
+          {
+            <fieldset className="mt-6 grid gap-3">
+              <legend className="sr-only">Select an answer</legend>
+              {answers.map((letter) => {
+                const optionText = question.questionText
+                  ? (question[`option${letter}` as keyof AttemptQuestion] as string)
+                  : '';
+
+                return (
+                  <label
+                    key={letter}
+                    className={`flex min-h-12 cursor-pointer items-center gap-3 rounded-lg border p-3 ${question.selectedAnswer === letter ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200'}`}
+                  >
+                    <input
+                      type="radio"
+                      name="answer"
+                      checked={question.selectedAnswer === letter}
+                      onChange={() => update((q) => ({ ...q, selectedAnswer: letter }))}
+                    />
+                    <span className="font-bold">{letter}.</span>
+                    {question.questionText ? <span>{optionText}</span> : null}
+                  </label>
+                );
+              })}
+            </fieldset>
+          }
           <div className="mt-7 flex flex-wrap justify-between gap-3">
             <button
               className="button button-secondary"
@@ -1183,7 +1267,26 @@ function ResultView({
                   : status === 'Incorrect' && attempt.hasNegativeMarking
                     ? -Number(attempt.negativeMarksPerQuestion)
                     : 0;
-              const answerText = question.selectedAnswer ?? 'Not answered';
+              const isTextQuestion = Boolean(question.questionText && question.questionText.trim());
+              const selectedOptionText =
+                isTextQuestion && question.selectedAnswer
+                  ? (question[
+                      `option${question.selectedAnswer}` as keyof AttemptQuestion
+                    ] as string)
+                  : '';
+              const correctOptionText =
+                isTextQuestion && question.correctAnswer
+                  ? (question[`option${question.correctAnswer}` as keyof AttemptQuestion] as string)
+                  : '';
+              const answerText = question.selectedAnswer
+                ? isTextQuestion
+                  ? `${question.selectedAnswer} · ${selectedOptionText}`
+                  : question.selectedAnswer
+                : 'Not answered';
+              const correctAnswerText =
+                isTextQuestion && question.correctAnswer
+                  ? `${question.correctAnswer} · ${correctOptionText}`
+                  : (question.correctAnswer ?? '—');
               const isCorrect = question.selectedAnswer === question.correctAnswer;
               const answerClassName = question.selectedAnswer
                 ? isCorrect
@@ -1207,16 +1310,53 @@ function ResultView({
                       {status} · {marks} marks
                     </span>
                   </div>
-                  <div className="mt-4">
-                    <QuestionImage
-                      className="max-h-96 w-full rounded-lg border border-slate-100 bg-slate-50"
-                      src={question.imagePath}
-                      alt={`Question ${question.questionNumber}`}
-                    />
-                  </div>
+                  {question.imagePath ? (
+                    <div className="mt-4">
+                      <QuestionImage
+                        className="max-h-96 w-full rounded-lg border border-slate-100 bg-slate-50"
+                        src={question.imagePath}
+                        alt={`Question ${question.questionNumber}`}
+                      />
+                    </div>
+                  ) : null}
+                  {question.questionText && (
+                    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-base font-medium leading-7 text-slate-800">
+                      {question.questionText}
+                    </div>
+                  )}
+                  {isTextQuestion && (
+                    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="mb-3 text-sm font-semibold text-slate-700">Options</p>
+                      <div className="grid gap-2 text-sm">
+                        {(['A', 'B', 'C', 'D'] as const).map((letter) => {
+                          const optionText = question[
+                            `option${letter}` as keyof AttemptQuestion
+                          ] as string;
+                          const isSelected = question.selectedAnswer === letter;
+                          const isCorrectOption = question.correctAnswer === letter;
+                          return (
+                            <div
+                              key={letter}
+                              className={`rounded-lg border px-3 py-2 ${
+                                isCorrectOption
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                                  : isSelected
+                                    ? 'border-red-200 bg-red-50 text-red-700'
+                                    : 'border-slate-200 bg-white text-slate-700'
+                              }`}
+                            >
+                              <span className="font-bold">{letter}.</span> {optionText}
+                              {isSelected && !isCorrectOption && ''}
+                              {isCorrectOption && '  • correct'}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <p className="mt-3 text-sm text-slate-600">
                     Your answer: <span className={answerClassName}>{answerText}</span> · Correct
-                    answer: <span className={correctClassName}>{question.correctAnswer}</span>
+                    answer: <span className={correctClassName}>{correctAnswerText}</span>
                   </p>
                   {stats && (
                     <div className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-5">

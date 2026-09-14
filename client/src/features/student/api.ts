@@ -60,7 +60,8 @@ export interface Dashboard {
 export interface AttemptQuestion {
   id: number;
   questionNumber: number;
-  imagePath: string;
+  imagePath?: string | null;
+  questionText?: string | null;
   optionA: string;
   optionB: string;
   optionC: string;

@@ -37,6 +37,11 @@ interface AdminRow extends RowDataPacket {
 interface QuestionInput {
   questionNumber: number;
   imagePath: string;
+  questionText: string | null;
+  optionA: string;
+  optionB: string;
+  optionC: string;
+  optionD: string;
   correctAnswer: Answer;
 }
 interface TestInput {
@@ -337,7 +342,7 @@ app.get('/api/student/attempts/:attemptId', async (request: StudentRequest, resp
     const attempt = attempts[0];
     if (!attempt) return void response.status(404).json({ message: 'Attempt not found.' });
     const [questions] = await db.execute<RowDataPacket[]>(
-      `SELECT q.id,q.question_number AS questionNumber,q.image_path AS imagePath,q.option_a AS optionA,q.option_b AS optionB,q.option_c AS optionC,q.option_d AS optionD,q.correct_answer AS correctAnswer,aa.selected_answer AS selectedAnswer,aa.visited,aa.marked_for_review AS markedForReview,COALESCE(aa.time_spent_seconds,0) AS timeSpentSeconds FROM questions q LEFT JOIN test_attempt_answers aa ON aa.question_id=q.id AND aa.attempt_id=? WHERE q.test_id=? ORDER BY q.question_number`,
+      `SELECT q.id,q.question_number AS questionNumber,q.question_text AS questionText,q.image_path AS imagePath,q.option_a AS optionA,q.option_b AS optionB,q.option_c AS optionC,q.option_d AS optionD,q.correct_answer AS correctAnswer,aa.selected_answer AS selectedAnswer,aa.visited,aa.marked_for_review AS markedForReview,COALESCE(aa.time_spent_seconds,0) AS timeSpentSeconds FROM questions q LEFT JOIN test_attempt_answers aa ON aa.question_id=q.id AND aa.attempt_id=? WHERE q.test_id=? ORDER BY q.question_number`,
       [attempt.id, attempt.test_id],
     );
     const remainingTimeSeconds = Number(
@@ -532,16 +537,30 @@ function readTest(body: unknown): TestInput | null {
   for (const item of value.questions) {
     if (typeof item !== 'object' || item === null) return null;
     const q = item as Record<string, unknown>;
+    const imagePath = typeof q.imagePath === 'string' ? q.imagePath.trim() : '';
+    const questionText = typeof q.questionText === 'string' ? q.questionText.trim() : '';
+    const optionA = typeof q.optionA === 'string' ? q.optionA.trim() : '';
+    const optionB = typeof q.optionB === 'string' ? q.optionB.trim() : '';
+    const optionC = typeof q.optionC === 'string' ? q.optionC.trim() : '';
+    const optionD = typeof q.optionD === 'string' ? q.optionD.trim() : '';
+    const hasTextQuestion = Boolean(questionText);
+    const hasImageQuestion = Boolean(imagePath);
+    const hasTextOptions = Boolean(optionA && optionB && optionC && optionD);
     if (
       !Number.isInteger(Number(q.questionNumber)) ||
-      typeof q.imagePath !== 'string' ||
-      !q.imagePath ||
+      (!hasTextQuestion && !hasImageQuestion) ||
+      (hasTextQuestion && !hasTextOptions) ||
       !isAnswer(q.correctAnswer)
     )
       return null;
     questions.push({
       questionNumber: Number(q.questionNumber),
-      imagePath: q.imagePath,
+      imagePath,
+      questionText: questionText || null,
+      optionA,
+      optionB,
+      optionC,
+      optionD,
       correctAnswer: q.correctAnswer,
     });
   }
@@ -601,16 +620,17 @@ async function saveTest(input: TestInput, id?: number): Promise<number> {
       testId = result.insertId;
     }
     await connection.query(
-      'INSERT INTO questions (test_id,question_number,image_path,option_a,option_b,option_c,option_d,correct_answer) VALUES ?',
+      'INSERT INTO questions (test_id,question_number,question_text,image_path,option_a,option_b,option_c,option_d,correct_answer) VALUES ?',
       [
         input.questions.map((q) => [
           testId,
           q.questionNumber,
-          q.imagePath,
-          'Option A',
-          'Option B',
-          'Option C',
-          'Option D',
+          q.questionText ?? null,
+          q.imagePath || null,
+          q.optionA,
+          q.optionB,
+          q.optionC,
+          q.optionD,
           q.correctAnswer,
         ]),
       ],
@@ -789,7 +809,7 @@ app.get('/api/tests/:id', async (request, response) => {
   if (!Array.isArray(tests) || !tests.length)
     return response.status(404).json({ message: 'Test not found.' });
   const [questions] = await db.execute(
-    'SELECT id, question_number AS questionNumber, image_path AS imagePath, correct_answer AS correctAnswer FROM questions WHERE test_id=? ORDER BY question_number',
+    'SELECT id, question_number AS questionNumber, question_text AS questionText, image_path AS imagePath, option_a AS optionA, option_b AS optionB, option_c AS optionC, option_d AS optionD, correct_answer AS correctAnswer FROM questions WHERE test_id=? ORDER BY question_number',
     [request.params.id],
   );
   response.json({ ...(tests[0] as object), questions });
